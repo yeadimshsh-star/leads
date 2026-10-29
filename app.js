@@ -151,6 +151,23 @@ if (window.PWA) {
   });
 }
 
+/* חיוג: באפליקציה המותקנת הקישור עובד רגיל; בקישור הישן (בתוך המסגרת של גוגל) פותחים בחלון חדש, אחרת הטלפון חוסם */
+function dial(a) {
+  if (window.PWA) return true;
+  window.open(a.getAttribute('href'), '_blank');
+  return false;
+}
+
+/* כפתור "חזרה" בקישור הישן: דרך מנגנון ההיסטוריה של Apps Script */
+if (!window.PWA && window.google && google.script && google.script.history) {
+  google.script.history.setChangeHandler(e => {
+    if (S.current && !(e.state && e.state.lead)) closeLead(true);
+  });
+}
+function gasPush(lead) {
+  if (!window.PWA && window.google && google.script && google.script.history) google.script.history.push({ lead }, {}, '');
+}
+
 /* ---------- טיוטות: מה שמוקלד נשמר במכשיר עד ששומרים, גם אם הדף נטען מחדש ---------- */
 const DRAFT_KEY = 'yaadim-drafts';
 function draftKey(el) { return (S.currentId || 'new') + ':' + el.id; }
@@ -207,7 +224,7 @@ function leadItem(r) {
       <div>${statusBadge(r)}${dueBadge(r)}</div>
     </div>
     <div class="acts" onclick="event.stopPropagation()">
-      ${phone ? `<a class="icon" href="tel:${esc(phone)}" title="חיוג">&#x1F4DE;</a>
+      ${phone ? `<a class="icon" href="tel:${esc(phone)}" onclick="return dial(this)" title="חיוג">&#x1F4DE;</a>
       <a class="icon" href="https://wa.me/${waPhone(phone)}" target="_blank" title="וואטסאפ">&#x1F4AC;</a>` : ''}
     </div>
   </div>`;
@@ -415,6 +432,7 @@ function openLead(n, keepScroll) {
     const st = { view: S.view, lead: v(r, 'AO') || r.row };
     if (S.current) history.replaceState(st, ''); else history.pushState(st, '');
   }
+  if (!window.PWA && !keepScroll && !S.current) gasPush(v(r, 'AO') || String(r.row));
   S.current = r;
   S.currentId = v(r, 'AO');
   const p = document.getElementById('panel'), st = p.scrollTop;
@@ -441,10 +459,10 @@ function leadPanel(r) {
     <div>${statusBadge(r)}<span class="badge">${esc(v(r, 'G'))}</span><span class="badge">מטפל: ${esc(C || '—')}</span>${dueBadge(r)}</div>
     <div class="muted" style="margin-top:6px">שורה ${r.row} · תחילה ${esc(v(r, 'J') || '—')}${v(r, 'L') ? ' · סיום ' + esc(v(r, 'L')) : ''}${v(r, 'AE') ? ' · ערוץ: ' + esc(v(r, 'AE')) : ''}</div>
     <div class="row" style="margin-top:10px">
-      ${phone ? `<a class="btn light" href="tel:${esc(phone)}">&#x1F4DE; ${esc(phone)}</a>
+      ${phone ? `<a class="btn light" href="tel:${esc(phone)}" onclick="return dial(this)">&#x1F4DE; ${esc(phone)}</a>
         <a class="btn light" href="https://wa.me/${waPhone(phone)}" target="_blank">&#x1F4AC; וואטסאפ</a>
         <button class="btn teal" onclick="pickTemplate()">&#x1F4AC; שלח טקסט מוכן</button>` : '<span class="muted">אין טלפון</span>'}
-      ${phone2 ? `<a class="btn ghost" href="tel:${esc(phone2)}">&#x1F4DE; ${esc(phone2)}</a>` : ''}
+      ${phone2 ? `<a class="btn ghost" href="tel:${esc(phone2)}" onclick="return dial(this)">&#x1F4DE; ${esc(phone2)}</a>` : ''}
       ${email ? `<a class="btn ghost" href="mailto:${esc(email)}" target="_blank">&#x2709; ${esc(email)}</a>` : ''}
     </div>
     <div id="tpls"></div>
