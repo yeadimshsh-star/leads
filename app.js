@@ -263,7 +263,7 @@ function sortList(rows) {
 function initSortable() {
   if (!window.Sortable) return;
   document.querySelectorAll('#main .sortable').forEach(el => Sortable.create(el, {
-    animation: 150, delay: 350, touchStartThreshold: 6, filter: '.acts', preventOnFilter: false, onEnd: saveOrder
+    animation: 150, delay: 400, delayOnTouchOnly: true, touchStartThreshold: 10, forceFallback: false, filter: '.acts', preventOnFilter: false, onEnd: saveOrder
   }));
 }
 function saveOrder() {

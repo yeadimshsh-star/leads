@@ -11,7 +11,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <style>
-  html, body { overscroll-behavior-y: contain; }
+  html { overscroll-behavior-y: none; }
   #login { position: fixed; inset: 0; z-index: 50; background: linear-gradient(160deg, #003DB8, #0B57D9 70%, #14CCAB); display: none;
     flex-direction: column; align-items: center; justify-content: center; gap: 18px; color: #fff; padding: 24px; text-align: center; }
   #login.open { display: flex; }
@@ -42,7 +42,7 @@
   nav button { flex: 1; max-width: 180px; border: 0; background: none; padding: 9px 0 11px; color: var(--muted); cursor: pointer; font-size: 13px; }
   nav button b { display: flex; justify-content: center; height: 26px; margin-bottom: 2px; }
   nav button b svg { width: 26px; height: 26px; fill: currentColor; }
-  html, body { overflow-x: hidden; max-width: 100%; }
+  body { overflow-x: clip; }
   .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 12px; margin-bottom: 4px; }
   .tablewrap table { min-width: 100%; }
   td.tot, th.tot, tr.total td { font-weight: 700; color: var(--blue); }
@@ -163,7 +163,7 @@
 </svg></div><h2 style="color:#fff;margin:0">אפליקציית הלידים</h2>
 <div>התחברו עם חשבון הגוגל של יעדים</div><div id="gbtn"></div></div>
 <script src="https://accounts.google.com/gsi/client" async onload="window.dispatchEvent(new Event('gis-ready'))"></script>
-<script src="pwa.js?v=202610291300"></script>
-<script src="app.js?v=202610291300"></script>
+<script src="pwa.js?v=202610291340"></script>
+<script src="app.js?v=202610291340"></script>
 </body>
 </html>
