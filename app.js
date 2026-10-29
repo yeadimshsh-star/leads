@@ -8,6 +8,18 @@ function colLetter(i) { let s = ''; i += 1; while (i) { const m = (i - 1) % 26; 
 const ci = l => COLS.indexOf(l);
 const v = (r, l) => (r.values[ci(l)] || '').trim();
 
+/* ---------- אייקונים בצבעי המותג (במקום אימוג'י) ---------- */
+const ICON = {
+  phone: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg>',
+  wa: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>'
+};
+/** אייקון "היום" עם התאריך של היום */
+function renderTodayIcon() {
+  const t = new Date();
+  const el = document.getElementById('todayIcon');
+  if (el) el.innerHTML = `<svg viewBox="0 0 24 24"><path d="M19 4h-1V2h-2v2H8V2H6v2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2V6a2 2 0 00-2-2zm0 16H5V9h14z"/><text x="12" y="18.3" text-anchor="middle" font-size="9" font-weight="700" font-family="Heebo,Arial" fill="currentColor">${t.getDate()}</text></svg>`;
+}
+
 /* ---------- תקשורת ---------- */
 function call(action, args) {
   if (window.PWA) return window.PWA.call(action, args);
@@ -190,6 +202,7 @@ function clearDrafts(prefix) {
 }
 function render() {
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.v === S.view));
+  renderTodayIcon();
   if (!S.data) return;
   const m = document.getElementById('main');
   m.innerHTML = S.view === 'today' ? viewToday() : S.view === 'all' ? viewAll() : S.view === 'dash' ? viewDash() : viewNew();
@@ -216,16 +229,15 @@ function statusBadge(r) {
 function leadItem(r) {
   const phone = v(r, 'E');
   const cls = r.active && (r.due === 'overdue' || r.due === 'today') ? r.due : '';
-  const drag = S.manual && S.view === 'today' && !S.current ? `<span class="drag" onclick="event.stopPropagation()" title="גרירה">&#x2630;</span>` : '';
   return `<div class="card lead ${cls}" data-id="${esc(v(r, 'AO'))}" onclick="openLead(${r.row})">
-    ${drag}<div class="main">
+    <div class="main">
       <div class="name">${esc(v(r, 'A') || '(ללא שם)')}</div>
       <div class="sub">${esc(v(r, 'G'))} · ${esc(v(r, 'C'))}</div>
       <div>${statusBadge(r)}${dueBadge(r)}</div>
     </div>
     <div class="acts" onclick="event.stopPropagation()">
-      ${phone ? `<a class="icon" href="tel:${esc(phone)}" onclick="return dial(this)" title="חיוג">&#x1F4DE;</a>
-      <a class="icon" href="https://wa.me/${waPhone(phone)}" target="_blank" title="וואטסאפ">&#x1F4AC;</a>` : ''}
+      ${phone ? `<a class="icon ph" href="tel:${esc(phone)}" onclick="return dial(this)" title="חיוג">${ICON.phone}</a>
+      <a class="icon wa" href="https://wa.me/${waPhone(phone)}" target="_blank" title="וואטסאפ">${ICON.wa}</a>` : ''}
     </div>
   </div>`;
 }
@@ -236,24 +248,22 @@ function list(rows) {
   return shown + more;
 }
 
-/* ---------- מסך היום (עם סדר ידני אישי בגרירה) ---------- */
-const MANUAL_KEY = 'yaadim-manual-order';
-S.manual = !!restore(MANUAL_KEY);
-function manualSort(rows, fallback) {
+/* ---------- מסך היום: סדר ידני אישי בלחיצה ארוכה וגרירה ---------- */
+/** לידים שסידרתם ידנית לפי הסדר שלכם; לידים חדשים שעוד לא סודרו מופיעים לפניהם לפי תאריך חזרה */
+function manualSort(rows) {
   const order = (S.data && S.data.order) || [];
-  if (!S.manual || !order.length) return rows.sort(fallback || byDue);
+  if (!order.length) return rows.sort(byDue);
   const idx = {}; order.forEach((id, i) => idx[id] = i);
-  return rows.sort((a, b) => ((idx[v(a, 'AO')] ?? 1e9) - (idx[v(b, 'AO')] ?? 1e9)) || (fallback || byDue)(a, b));
+  return rows.sort((a, b) => ((idx[v(a, 'AO')] ?? -1) - (idx[v(b, 'AO')] ?? -1)) || byDue(a, b));
 }
 function sortList(rows) {
   if (!rows.length) return '<div class="card muted">אין שורות להצגה.</div>';
   return `<div class="sortable">${rows.map(leadItem).join('')}</div>`;
 }
-function toggleManual() { S.manual = !S.manual; store(MANUAL_KEY, S.manual); render(); }
 function initSortable() {
-  if (!S.manual || !window.Sortable) return;
+  if (!window.Sortable) return;
   document.querySelectorAll('#main .sortable').forEach(el => Sortable.create(el, {
-    handle: '.drag', animation: 150, delay: 120, delayOnTouchOnly: true, onEnd: saveOrder
+    animation: 150, delay: 350, touchStartThreshold: 6, filter: '.acts', preventOnFilter: false, onEnd: saveOrder
   }));
 }
 function saveOrder() {
@@ -262,27 +272,26 @@ function saveOrder() {
   S.data.order = shown.concat(rest);
   saveCache();
   clearTimeout(S.orderT);
-  S.orderT = setTimeout(() => call('setOrder', { ids: S.data.order }).catch(e => toast(e.message || String(e), true)), 800);
+  S.orderT = setTimeout(() => call('setOrder', { ids: S.data.order }).then(() => toast('הסדר נשמר')).catch(e => toast(e.message || String(e), true)), 800);
 }
+function jumpTo(id) { const el = document.getElementById(id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 function viewToday() {
   const mine = openLeads().filter(r => v(r, 'C') === S.data.me);
   const over = manualSort(mine.filter(r => r.due === 'overdue'));
   const tod = manualSort(mine.filter(r => r.due === 'today'));
   const none = manualSort(mine.filter(r => r.due === 'none' || r.due === 'other'));
   const week = manualSort(mine.filter(r => r.due === 'future' && r.kTime <= addDays(today0(), 7).getTime()));
-  const L = S.manual ? sortList : list;
-  const sortBtn = window.Sortable ? `<button class="chip ${S.manual ? 'on' : ''}" onclick="toggleManual()">&#x2195; ${S.manual ? 'סדר ידני פעיל' : 'סדר ידני'}</button>` : '';
-  return `<div class="row" style="justify-content:space-between"><h2>היום של ${esc(S.data.me)}</h2>${sortBtn}</div>
-    ${S.manual ? '<div class="muted" style="margin:-4px 2px 8px">גוררים לפי הידית &#x2630; כדי לסדר. הסדר נשמר לך בלבד.</div>' : ''}
+  return `<h2>היום של ${esc(S.data.me)}</h2>
     <div class="stats">
-      <div class="stat red"><b>${over.length}</b><span>באיחור</span></div>
-      <div class="stat orange"><b>${tod.length}</b><span>להיום</span></div>
-      <div class="stat"><b>${mine.length}</b><span>לידים פתוחים שלי</span></div>
+      <div class="stat red" onclick="jumpTo('sec-over')"><b>${over.length}</b><span>באיחור</span></div>
+      <div class="stat orange" onclick="jumpTo('sec-today')"><b>${tod.length}</b><span>להיום</span></div>
+      <div class="stat" onclick="S.f.who='me';S.f.stage='leads';S.f.status='פעיל';S.f.due='';S.f.q='';go('all')"><b>${mine.length}</b><span>לידים פתוחים שלי</span></div>
     </div>
-    <h3>באיחור (${over.length})</h3>${L(over)}
-    <h3>להיום (${tod.length})</h3>${L(tod)}
-    <h3>ללא תאריך חזרה (${none.length})</h3>${L(none)}
-    <h3>בשבוע הקרוב (${week.length})</h3>${L(week)}`;
+    <div class="muted" style="margin:-2px 2px 8px">לסידור ידני: לחיצה ארוכה על ליד וגרירה. הסדר נשמר לך בלבד.</div>
+    <h3 id="sec-over">באיחור (${over.length})</h3>${sortList(over)}
+    <h3 id="sec-today">להיום (${tod.length})</h3>${sortList(tod)}
+    <h3>ללא תאריך חזרה (${none.length})</h3>${sortList(none)}
+    <h3>בשבוע הקרוב (${week.length})</h3>${sortList(week)}`;
 }
 
 /* ---------- כל השורות ---------- */
@@ -295,6 +304,7 @@ function filtered() {
     if (f.who === 'me' && c !== me) return false;
     if (S.data.handlers.includes(f.who) && c !== f.who) return false;
     if (f.who === 'others' && S.data.handlers.includes(c)) return false;
+    if (String(f.who).startsWith('adv:') && c !== f.who.slice(4)) return false;
     if (f.stage === 'leads' && !r.isLead) return false;
     if (f.stage === 'buys' && r.isLead) return false;
     if (f.stage && !['leads', 'buys'].includes(f.stage) && v(r, 'G') !== f.stage) return false;
@@ -312,8 +322,16 @@ function filtered() {
 }
 function viewAll() {
   const f = S.f, L = S.data.lists;
-  const whoChips = [['me', 'שלי'], ...S.data.handlers.filter(h => h !== S.data.me).map(h => [h, h]), ['others', 'יועצים אחרים'], ['', 'כולם']]
-    .map(([k, t]) => `<button class="chip ${f.who === k ? 'on' : ''}" onclick="setF('who','${k}')">${esc(t)}</button>`).join('');
+  const advisors = [...new Set([...(L.C || []), ...S.rows.map(r => v(r, 'C'))])].filter(c => c && !S.data.handlers.includes(c));
+  const advOn = f.who === 'others' || String(f.who).startsWith('adv:');
+  const whoChips = [['me', 'שלי'], ...S.data.handlers.filter(h => h !== S.data.me).map(h => [h, h])]
+    .map(([k, t]) => `<button class="chip ${f.who === k ? 'on' : ''}" onclick="setF('who','${k}')">${esc(t)}</button>`).join('') +
+    `<select class="chip ${advOn ? 'on' : ''}" style="width:auto" onchange="setF('who',this.value)">
+      <option value="" ${advOn ? '' : 'selected'} disabled>יועצים אחרים ▾</option>
+      <option value="others" ${f.who === 'others' ? 'selected' : ''}>כל היועצים האחרים</option>
+      ${advisors.map(a => `<option value="adv:${esc(a)}" ${f.who === 'adv:' + a ? 'selected' : ''}>${esc(a)}</option>`).join('')}
+    </select>` +
+    `<button class="chip ${f.who === '' ? 'on' : ''}" onclick="setF('who','')">כולם</button>`;
   const opt = (val, t, cur) => `<option value="${esc(val)}" ${cur === val ? 'selected' : ''}>${esc(t)}</option>`;
   const statuses = [...new Set([...(L.H || []), ...S.rows.map(r => r.values[7])].map(s => String(s).trim()))].filter(Boolean);
   const rows = filtered();
@@ -328,7 +346,12 @@ function viewAll() {
     <div id="res">${resList(rows)}</div>`;
 }
 function resList(rows) { rows = rows || filtered(); return `<div class="muted" style="margin:0 2px 6px">${rows.length} שורות</div>` + list(rows); }
-function setF(k, val) { S.f[k] = val; S.limit = 100; render(); }
+function setF(k, val) {
+  S.f[k] = val; S.limit = 100;
+  // יועצים מופיעים בעיקר בשורות רכש, ולכן בבחירת יועץ מציגים את כל השלבים
+  if (k === 'who' && (val === 'others' || String(val).startsWith('adv:')) && S.f.stage === 'leads') S.f.stage = '';
+  render();
+}
 
 /* ---------- דשבורד ---------- */
 const productName = g => String(g).replace(/^(ליד|רכש)\s+/, '').replace('צמיחה עסקית', 'מעטפת צמיחה עסקית');
@@ -347,14 +370,15 @@ function isUpgrade(r) {
 }
 function table(head, rows, opts) {
   opts = opts || {};
-  return `<table><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr>${rows.map((r, i) =>
-    `<tr${opts.totalLast && i === rows.length - 1 ? ' class="total"' : ''}>${r.map((c, j) => `<td class="${(opts.cls && opts.cls[i] && c && j) ? opts.cls[i] : ''}">${c}</td>`).join('')}</tr>`).join('')}</table>`;
+  const last = head.length - 1, totCol = head[last] === 'סה"כ';
+  return `<div class="tablewrap"><table><tr>${head.map((h, j) => `<th class="${totCol && j === last ? 'tot' : ''}">${h}</th>`).join('')}</tr>${rows.map((r, i) =>
+    `<tr${opts.totalLast && i === rows.length - 1 ? ' class="total"' : ''}>${r.map((c, j) => `<td class="${[(opts.cls && opts.cls[i] && c && j) ? opts.cls[i] : '', totCol && j === last ? 'tot' : ''].join(' ')}">${c}</td>`).join('')}</tr>`).join('')}</table></div>`;
 }
 function viewDash() {
   const t = today0(), day = 86400000;
-  const people = [...S.data.handlers, 'אחרים'];
+  const people = [...S.data.handlers];
   const cols = [...people, 'סה"כ'];
-  const of = (rows, p) => p === 'סה"כ' ? rows : rows.filter(r => p === 'אחרים' ? !S.data.handlers.includes(v(r, 'C')) : v(r, 'C') === p);
+  const of = (rows, p) => p === 'סה"כ' ? rows : rows.filter(r => v(r, 'C') === p);
   const open = openLeads();
   const days = r => r.kTime === null ? null : Math.round((r.kTime - t.getTime()) / day);
 
@@ -398,7 +422,7 @@ function viewDash() {
     return [ymLabel(k), inM(S.rows.filter(r => r.isLead), k).length, b.filter(r => v(r, 'G') === 'רכש פגישה').length,
       acc.length, b.filter(r => /צמיחה/.test(v(r, 'G'))).length, acc.filter(isUpgrade).length];
   });
-  const control = table(['בקרה חודשית', 'לידים שהגיעו', 'פגישות שנמכרו', 'ליוויים שנמכרו', 'מעטפות צמיחה', 'שדרוגים מפגישה לליווי'], ctrl);
+  const control = table(['בקרה חודשית', 'לידים שהגיעו', 'פגישות שנמכרו', 'ליוויים שנמכרו', 'מעטפת צמיחה', 'שדרוגים מפגישה לליווי'], ctrl);
 
   // 5. אחוזי המרה
   const pct = (a, b) => b ? (100 * a / b).toFixed(1) + '%' : '—';
@@ -414,13 +438,9 @@ function viewDash() {
   const cap = S.data.capacity;
   const capTable = cap ? `<h3>תפוסת יועצים</h3>` + table(cap[0].map(esc), cap.slice(1).map(r => r.map(esc))) : '';
 
-  const dueLists = S.data.handlers.map(p => {
-    const rows = of(open, p).filter(r => r.due === 'overdue' || r.due === 'today').sort(byDue);
-    return `<h3>${p}: לחזור היום ובאיחור (${rows.length})</h3>${rows.length ? rows.map(leadItem).join('') : '<div class="card muted">אין &#x1F389;</div>'}`;
-  }).join('');
   const gap = '<div style="height:10px"></div>';
   return `<h2>דשבורד לידים</h2><div class="muted" style="margin:-4px 2px 8px">נכון ל־${new Date(S.loadedAt).toLocaleString('he-IL')}</div>
-    ${summary}${gap}${byProduct}${salesTable}${gap}<h3>בקרה חודשית</h3>${control}${gap}${conv}${capTable}${dueLists}`;
+    ${summary}${gap}${byProduct}${salesTable}${gap}<h3>בקרה חודשית</h3>${control}${gap}${conv}${capTable}`;
 }
 
 /* ---------- כרטיס ליד ---------- */
@@ -459,10 +479,10 @@ function leadPanel(r) {
     <div>${statusBadge(r)}<span class="badge">${esc(v(r, 'G'))}</span><span class="badge">מטפל: ${esc(C || '—')}</span>${dueBadge(r)}</div>
     <div class="muted" style="margin-top:6px">שורה ${r.row} · תחילה ${esc(v(r, 'J') || '—')}${v(r, 'L') ? ' · סיום ' + esc(v(r, 'L')) : ''}${v(r, 'AE') ? ' · ערוץ: ' + esc(v(r, 'AE')) : ''}</div>
     <div class="row" style="margin-top:10px">
-      ${phone ? `<a class="btn light" href="tel:${esc(phone)}" onclick="return dial(this)">&#x1F4DE; ${esc(phone)}</a>
-        <a class="btn light" href="https://wa.me/${waPhone(phone)}" target="_blank">&#x1F4AC; וואטסאפ</a>
-        <button class="btn teal" onclick="pickTemplate()">&#x1F4AC; שלח טקסט מוכן</button>` : '<span class="muted">אין טלפון</span>'}
-      ${phone2 ? `<a class="btn ghost" href="tel:${esc(phone2)}" onclick="return dial(this)">&#x1F4DE; ${esc(phone2)}</a>` : ''}
+      ${phone ? `<a class="btn light" href="tel:${esc(phone)}" onclick="return dial(this)">${ICON.phone} ${esc(phone)}</a>
+        <a class="btn light" style="color:#128C7E" href="https://wa.me/${waPhone(phone)}" target="_blank">${ICON.wa} וואטסאפ</a>
+        <button class="btn teal" onclick="pickTemplate()">${ICON.wa} שלח טקסט מוכן</button>` : '<span class="muted">אין טלפון</span>'}
+      ${phone2 ? `<a class="btn ghost" href="tel:${esc(phone2)}" onclick="return dial(this)">${ICON.phone} ${esc(phone2)}</a>` : ''}
       ${email ? `<a class="btn ghost" href="mailto:${esc(email)}" target="_blank">&#x2709; ${esc(email)}</a>` : ''}
     </div>
     <div id="tpls"></div>
