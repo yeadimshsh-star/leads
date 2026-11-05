@@ -79,6 +79,7 @@ async function reload(quiet) {
       if (S.currentId || S.current) reopenCurrent();
     }
     showSales();
+    loadHours();
   } catch (e) {
     const msg = e.message || String(e);
     toast(msg, true);
@@ -204,10 +205,12 @@ function render() {
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.v === S.view));
   renderTodayIcon();
   const nc = document.getElementById('navClients'); if (nc) nc.style.display = S.data && S.data.canClients ? '' : 'none';
+  const ns = document.getElementById('navSalary'); if (ns) ns.style.display = S.data && S.data.canSalary && !S.data.canClients ? '' : 'none';
   if (!S.data) return;
   const m = document.getElementById('main');
   if (S.view === 'clients' && !S.data.canClients) S.view = 'today';
-  m.innerHTML = S.view === 'today' ? viewToday() : S.view === 'all' ? viewAll() : S.view === 'dash' ? viewDash() : S.view === 'clients' ? viewClients() : viewNew();
+  if (S.view === 'salary' && !S.data.canSalary) S.view = 'today';
+  m.innerHTML = S.view === 'today' ? viewToday() : S.view === 'all' ? viewAll() : S.view === 'dash' ? viewDash() : S.view === 'clients' ? viewClients() : S.view === 'salary' ? viewSalary() : viewNew();
   if (S.view === 'new') restoreDrafts(m);
   if (S.view === 'today') initSortable();
 }
@@ -283,7 +286,7 @@ function viewToday() {
   const tod = manualSort(mine.filter(r => r.due === 'today'));
   const none = manualSort(mine.filter(r => r.due === 'none' || r.due === 'other'));
   const week = manualSort(mine.filter(r => r.due === 'future' && r.kTime <= addDays(today0(), 7).getTime()));
-  return `<h2>היום של ${esc(S.data.me)}</h2>
+  return `<h2>היום של ${esc(S.data.me)}</h2>${clockCard()}
     <div class="stats">
       <div class="stat red" onclick="jumpTo('sec-over')"><b>${over.length}</b><span>באיחור</span></div>
       <div class="stat orange" onclick="jumpTo('sec-today')"><b>${tod.length}</b><span>להיום</span></div>
@@ -489,7 +492,9 @@ function viewClients() {
     .sort((a, b) => (parseDate(v(a, 'L')) || 9e15) - (parseDate(v(b, 'L')) || 9e15));
   const tabs = `<div class="chips">
     <button class="chip ${f.tab === 'list' ? 'on' : ''}" onclick="setCF('tab','list')">רשימת לקוחות</button>
-    <button class="chip ${f.tab === 'dash' ? 'on' : ''}" onclick="setCF('tab','dash')">דשבורד לקוחות</button></div>`;
+    <button class="chip ${f.tab === 'dash' ? 'on' : ''}" onclick="setCF('tab','dash')">דשבורד לקוחות</button>
+    ${S.data.canSalary ? `<button class="chip ${f.tab === 'salary' ? 'on' : ''}" onclick="setCF('tab','salary')">שכר נריה</button>` : ''}</div>`;
+  if (f.tab === 'salary') return `<h2>שכר נריה</h2>${tabs}${salaryBody()}`;
   if (f.tab === 'dash') return `<h2>דשבורד לקוחות</h2>${tabs}${clientsDash(active, meetings)}`;
   const advisors = [...new Set(active.map(r => v(r, 'C')).filter(Boolean))].sort();
   const opt = (val, t, cur) => `<option value="${esc(val)}" ${cur === val ? 'selected' : ''}>${esc(t)}</option>`;
@@ -538,6 +543,141 @@ function clientsDash(active, meetings) {
   const capTable = cap ? `<h3>תפוסת יועצים</h3>` + table(cap[0].map(esc), cap.slice(1).map(r => r.map(esc))) : '';
   return `<div class="muted" style="margin:-4px 2px 8px">נכון ל־${new Date(S.loadedAt).toLocaleString('he-IL')}</div>
     ${summary}${capTable}`;
+}
+
+
+/* ---------- שעון נוכחות ושכר לנריה ---------- */
+S.hours = null; S.salMonth = '';
+async function loadHours() {
+  if (!S.data || !S.data.canSalary) return;
+  try { S.hours = await call('hours'); if (['today', 'salary', 'clients'].includes(S.view) && !isTyping()) render(); bonusPopup(); }
+  catch (e) { }
+}
+function openShift() { return S.hours && S.hours.rows.filter(x => x.in && !x.out).pop(); }
+function clockCard() {
+  if (!S.hours || !S.hours.canClock) return '';
+  const o = openShift();
+  if (!o) return `<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+    <div><b>שעון נוכחות</b><div class="muted">לא במשמרת</div></div>
+    <button class="btn teal" onclick="clockDo('in')">כניסה</button></div>`;
+  const [h, m] = o.in.split(':').map(Number), st = new Date(o.date + 'T00:00'); st.setHours(h, m);
+  const mins = Math.max(0, Math.round((Date.now() - st) / 60000));
+  return `<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:10px;border-color:var(--teal)">
+    <div><b>במשמרת מ־${esc(o.in)}</b><div class="muted">⏱ ${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')} שעות</div></div>
+    <button class="btn" onclick="clockDo('out')">יציאה</button></div>`;
+}
+async function clockDo(type) {
+  if (type === 'out' && !confirm('לסיים את המשמרת עכשיו?')) return;
+  busy(true);
+  try { const r = await call('clock', { type }); S.hours.rows = r.rows; toast(type === 'in' ? 'כניסה נרשמה' : 'יציאה נרשמה'); render(); }
+  catch (e) { toast(e.message || String(e), true); } finally { busy(false); }
+}
+setInterval(() => { if (S.view === 'today' && openShift() && !isTyping()) render(); }, 60000);
+
+function rate(key) {
+  const R = (S.hours && S.hours.rates) || {};
+  const find = pre => { const k = Object.keys(R).find(x => x.startsWith(pre)); return k ? R[k] : null; };
+  const map = {
+    hour: find('שעות עבודה') ?? 40, meetFull: find('פגישה במחיר מלא') ?? 180, meetPart: find('פגישה במחיר חלקי') ?? 100,
+    growFull: find('צמיחה עסקית במחיר מלא') ?? 400, growPart: find('צמיחה עסקית מחיר חלקי') ?? 250, grow4500: find('צמיחה עסקית במחיר 4') ?? 325,
+    accDirect: find('ליווי עסקי מלא') ?? 850, accEfraim: find('ליווי שנמכר') ?? 425
+  };
+  return map[key];
+}
+const SELLER = 'נריה';
+function sellerLead(p, leadStage) {
+  return S.rows.find(x => x.isLead && v(x, 'G') === leadStage && v(x, 'C') === SELLER && (sameClient(x, p) || (v(x, 'A') && v(x, 'A') === v(p, 'A'))));
+}
+/** בונוסים לפי הכללים של תהליך הכנת השכר: רק מכירות של נריה, ורק כשהתממשו */
+function bonusItems() {
+  const t = today0(), items = [], pending = [];
+  S.rows.filter(r => !r.isLead).forEach(p => {
+    const g = v(p, 'G'), O = num(v(p, 'O')), name = v(p, 'A');
+    if (g === 'רכש פגישה') {
+      if (!sellerLead(p, 'ליד פגישה') || !O) return; // פגישה במתנה – לא משולם
+      const d = parseDate(v(p, 'L'));
+      const full = O >= 1000 && !/החזר/.test(v(p, 'N'));
+      const it = { name, type: full ? 'פגישה במחיר מלא' : 'פגישה חלקית / עם החזר', amount: rate(full ? 'meetFull' : 'meetPart'), date: d, row: p.row };
+      if (d && d <= t) items.push(it); else pending.push({ ...it, why: d ? 'הפגישה ב־' + v(p, 'L') : 'אין עדיין מועד פגישה' });
+    } else if (g === 'רכש צמיחה עסקית') {
+      if (!sellerLead(p, 'ליד צמיחה עסקית')) return;
+      const key = O >= 5700 ? 'growFull' : O >= 4200 ? 'grow4500' : O >= 2800 ? 'growPart' : null;
+      if (!key) return;
+      items.push({ name, type: 'מעטפת צמיחה (' + O.toLocaleString('he-IL') + ' ₪)', amount: rate(key), date: parseDate(v(p, 'J')), row: p.row });
+    } else if (g === 'רכש ליווי מקיף') {
+      const d = parseDate(v(p, 'J'));
+      if (sellerLead(p, 'ליד ליווי מקיף')) items.push({ name, type: 'ליווי שנריה מכר', amount: rate('accDirect'), date: d, row: p.row });
+      else if (S.rows.some(m => v(m, 'G') === 'רכש פגישה' && sameClient(m, p) && sellerLead(m, 'ליד פגישה')))
+        items.push({ name, type: 'ליווי שאפרים מכר אחרי פגישה של נריה', amount: rate('accEfraim'), date: d, row: p.row });
+    }
+  });
+  return { items, pending };
+}
+function monthPay(m) {
+  const { items, pending } = bonusItems();
+  const its = items.filter(x => ym(x.date) === m);
+  const hrs = ((S.hours && S.hours.rows) || []).filter(x => x.date.slice(0, 7) === m).reduce((s, x) => s + x.hours, 0);
+  const bonus = its.reduce((s, x) => s + x.amount, 0);
+  return { its, pending, hrs, hourPay: hrs * rate('hour'), bonus };
+}
+function bonusPopup() {
+  if (!S.hours) return;
+  const m = ym(today0()), { bonus } = monthPay(m), key = 'yaadim-bonus-' + m;
+  const prev = restore(key);
+  store(key, bonus);
+  if (prev === null || bonus <= prev) return;
+  const box = document.getElementById('celebrate');
+  const who = S.data.me === SELLER ? 'הבונוס שלך' : 'הבונוס של נריה';
+  box.innerHTML = `<div class="boom">&#x1F680;</div><div class="sale-line"><b>${who} החודש עלה ל־${money(bonus)}!</b></div>
+    <button class="btn teal" style="margin-top:10px" onclick="document.getElementById('celebrate').classList.remove('open')">יש! &#x1F44F;</button>`;
+  box.classList.add('open');
+}
+function viewSalary() { return `<h2>שעות ושכר</h2>${salaryBody()}`; }
+function salaryBody() {
+  if (!S.hours) { loadHours(); return '<div class="card muted">טוען שעות ותעריפים…</div>'; }
+  const t = today0(), m = S.salMonth || ym(t);
+  const months = [...new Set([ym(t), ...S.hours.rows.map(x => x.date.slice(0, 7))])].sort().reverse();
+  const P = monthPay(m), total = P.hourPay + P.bonus;
+  const monthSel = `<select style="max-width:160px" onchange="S.salMonth=this.value;render()">${months.map(k => `<option value="${k}" ${k === m ? 'selected' : ''}>${ymLabel(k)}</option>`).join('')}</select>`;
+  const groups = {};
+  P.its.forEach(x => { (groups[x.type] = groups[x.type] || { n: 0, amount: x.amount, names: [] }); groups[x.type].n++; groups[x.type].names.push(x.name); });
+  const bonusRows = Object.entries(groups).map(([type, g]) => [esc(type), g.n, money(g.amount), `<b>${money(g.n * g.amount)}</b>`]);
+  const canEdit = S.hours.canClock || S.data.me === 'שמואל';
+  const shifts = S.hours.rows.filter(x => x.date.slice(0, 7) === m).sort((a, b) => (b.date + b.in).localeCompare(a.date + a.in));
+  return `<div class="row" style="margin:0 2px 8px"><span class="muted">חודש:</span>${monthSel}</div>
+    <div class="stats">
+      <div class="stat"><b>${P.hrs.toFixed(1)}</b><span>שעות</span></div>
+      <div class="stat"><b>${money(P.bonus)}</b><span>בונוסים</span></div>
+      <div class="stat"><b>${money(total)}</b><span>סה"כ לחודש</span></div>
+    </div>
+    ${table(['רכיב', 'כמות', 'תעריף', 'סכום'], [
+      ['שעות עבודה', P.hrs.toFixed(2), money(rate('hour')), `<b>${money(P.hourPay)}</b>`], ...bonusRows,
+      ['<b>סה"כ</b>', '', '', `<b>${money(total)}</b>`]], { totalLast: true })}
+    ${P.its.length ? `<h3>הבונוסים החודש (${P.its.length})</h3>` + P.its.map(x => `<div class="card lead" onclick="openLead(${x.row})"><div class="main"><div class="name">${esc(x.name)}</div><div class="sub">${esc(x.type)}${x.date ? ' · ' + x.date.toLocaleDateString('he-IL') : ''}</div></div><b style="color:var(--blue)">${money(x.amount)}</b></div>`).join('') : ''}
+    ${P.pending.length && m === ym(t) ? `<h3>בדרך – יחושבו כשהפגישה תתקיים (${P.pending.length})</h3>` + P.pending.map(x => `<div class="card lead" onclick="openLead(${x.row})"><div class="main"><div class="name">${esc(x.name)}</div><div class="sub">${esc(x.type)} · ${esc(x.why)}</div></div><span class="muted">${money(x.amount)}</span></div>`).join('') : ''}
+    <h3>משמרות (${shifts.length})</h3>
+    ${canEdit ? `<button class="btn light" style="margin-bottom:8px" onclick="editShift('')">+ הוספת משמרת ידנית</button>` : ''}
+    <div id="shiftForm"></div>
+    ${shifts.length ? table(['תאריך', 'כניסה', 'יציאה', 'שעות', 'הערה', ''], shifts.map(x => [
+      new Date(x.date + 'T00:00').toLocaleDateString('he-IL'), esc(x.in), esc(x.out || '—'), x.hours ? x.hours.toFixed(2) : '—', esc(x.note),
+      canEdit ? `<button class="btn ghost" style="padding:4px 10px" onclick="editShift('${esc(x.id)}')">תיקון</button>` : ''])) : '<div class="card muted">אין משמרות בחודש הזה.</div>'}`;
+}
+function editShift(id) {
+  const x = (S.hours.rows.find(r => r.id === id)) || { date: iso(today0()), in: '', out: '', note: '' };
+  document.getElementById('shiftForm').innerHTML = `<div class="card"><div class="grid2">
+    <div><label>תאריך</label><input type="date" id="sh_date" value="${esc(x.date)}"></div>
+    <div><label>כניסה</label><input type="time" id="sh_in" value="${esc(x.in)}"></div>
+    <div><label>יציאה</label><input type="time" id="sh_out" value="${esc(x.out)}"></div>
+    <div><label>הערה</label><input id="sh_note" value="${esc(x.note)}"></div></div>
+    <div class="row" style="margin-top:8px"><button class="btn" onclick="saveShift('${esc(id)}')">שמירה</button>
+    <button class="btn ghost" onclick="document.getElementById('shiftForm').innerHTML=''">ביטול</button></div></div>`;
+  document.getElementById('shiftForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+async function saveShift(id) {
+  const g = k => document.getElementById(k).value.trim();
+  busy(true);
+  try { const r = await call('hoursSave', { id, date: g('sh_date'), in: g('sh_in'), out: g('sh_out'), note: g('sh_note') }); S.hours.rows = r.rows; toast('המשמרת נשמרה'); render(); }
+  catch (e) { toast(e.message || String(e), true); } finally { busy(false); }
 }
 
 /* ---------- כרטיס ליד ---------- */
