@@ -203,9 +203,11 @@ function clearDrafts(prefix) {
 function render() {
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.v === S.view));
   renderTodayIcon();
+  const nc = document.getElementById('navClients'); if (nc) nc.style.display = S.data && S.data.canClients ? '' : 'none';
   if (!S.data) return;
   const m = document.getElementById('main');
-  m.innerHTML = S.view === 'today' ? viewToday() : S.view === 'all' ? viewAll() : S.view === 'dash' ? viewDash() : viewNew();
+  if (S.view === 'clients' && !S.data.canClients) S.view = 'today';
+  m.innerHTML = S.view === 'today' ? viewToday() : S.view === 'all' ? viewAll() : S.view === 'dash' ? viewDash() : S.view === 'clients' ? viewClients() : viewNew();
   if (S.view === 'new') restoreDrafts(m);
   if (S.view === 'today') initSortable();
 }
@@ -443,6 +445,103 @@ function viewDash() {
     ${summary}${gap}${byProduct}${salesTable}${gap}<h3>בקרה חודשית</h3>${control}${gap}${conv}${capTable}`;
 }
 
+
+/* ---------- מסך "לקוחות" (שמואל ואפרים): לקוחות פעילים, פגישות עתידיות ודשבורד לקוחות ---------- */
+S.cf = { prod: '', adv: '', q: '', tab: 'list' };
+const CLIENT_STAGES = ['רכש ליווי מקיף', 'רכש ליווי בסיסי', 'רכש צמיחה עסקית'];
+const money = n => '₪' + Math.round(n).toLocaleString('he-IL');
+const num = x => { const n = Number(String(x || '').replace(/[^\d.-]/g, '')); return isNaN(n) ? 0 : n; };
+function monthsSince(disp) {
+  const d = parseDate(disp); if (!d) return '';
+  const m = Math.max(0, Math.floor((today0() - d) / (30.44 * 86400000)));
+  return m < 1 ? 'פחות מחודש' : m === 1 ? 'חודש' : m + ' חודשים';
+}
+function clientItem(r) {
+  const phone = v(r, 'E'), O = v(r, 'O'), P = v(r, 'P');
+  return `<div class="card lead" data-id="${esc(v(r, 'AO'))}" onclick="openLead(${r.row})">
+    <div class="main">
+      <div class="name">${esc(v(r, 'A') || '(ללא שם)')}</div>
+      <div class="sub">${esc(productName(v(r, 'G')))} · יועץ: ${esc(v(r, 'C') || '—')}</div>
+      <div><span class="badge">מ־${esc(v(r, 'J') || '—')}</span>${v(r, 'J') ? `<span class="badge gray">${monthsSince(v(r, 'J'))}</span>` : ''}${O ? `<span class="badge green">לקוח: ${esc(O)}</span>` : ''}${P ? `<span class="badge gray">ליועץ: ${esc(P)}</span>` : ''}</div>
+    </div>
+    <div class="acts" onclick="event.stopPropagation()">
+      ${phone ? `<a class="icon ph" href="tel:${esc(phone)}" onclick="return dial(this)" title="חיוג">${ICON.phone}</a>
+      <a class="icon wa" href="https://wa.me/${waPhone(phone)}" target="_blank" title="וואטסאפ">${ICON.wa}</a>` : ''}
+    </div>
+  </div>`;
+}
+function meetingItem(r) {
+  const L = v(r, 'L'), d = parseDate(L), past = d && d < today0();
+  const when = L ? `<span class="badge ${past ? 'red' : 'green'}">${past ? 'מועד עבר · ' : 'פגישה ב־'}${esc(L)}</span>` : '<span class="badge gray">אין עדיין מועד</span>';
+  const phone = v(r, 'E');
+  return `<div class="card lead" onclick="openLead(${r.row})">
+    <div class="main"><div class="name">${esc(v(r, 'A') || '(ללא שם)')}</div>
+      <div class="sub">שולם ב־${esc(v(r, 'J') || '—')} · ${esc(v(r, 'C') || '—')}${v(r, 'Q') ? ' · שולם: ' + esc(v(r, 'Q')) : ''}</div><div>${when}</div></div>
+    <div class="acts" onclick="event.stopPropagation()">
+      ${phone ? `<a class="icon ph" href="tel:${esc(phone)}" onclick="return dial(this)">${ICON.phone}</a>
+      <a class="icon wa" href="https://wa.me/${waPhone(phone)}" target="_blank">${ICON.wa}</a>` : ''}
+    </div></div>`;
+}
+function setCF(k, val) { S.cf[k] = val; render(); }
+function viewClients() {
+  const f = S.cf;
+  const active = S.rows.filter(r => r.active && CLIENT_STAGES.includes(v(r, 'G')));
+  const meetings = S.rows.filter(r => r.active && v(r, 'G') === 'רכש פגישה')
+    .sort((a, b) => (parseDate(v(a, 'L')) || 9e15) - (parseDate(v(b, 'L')) || 9e15));
+  const tabs = `<div class="chips">
+    <button class="chip ${f.tab === 'list' ? 'on' : ''}" onclick="setCF('tab','list')">רשימת לקוחות</button>
+    <button class="chip ${f.tab === 'dash' ? 'on' : ''}" onclick="setCF('tab','dash')">דשבורד לקוחות</button></div>`;
+  if (f.tab === 'dash') return `<h2>לקוחות</h2>${tabs}${clientsDash(active, meetings)}`;
+  const advisors = [...new Set(active.map(r => v(r, 'C')).filter(Boolean))].sort();
+  const opt = (val, t, cur) => `<option value="${esc(val)}" ${cur === val ? 'selected' : ''}>${esc(t)}</option>`;
+  let rows = active.filter(r =>
+    (!f.prod || v(r, 'G') === f.prod) && (!f.adv || v(r, 'C') === f.adv) &&
+    (!f.q || r.search.includes(f.q.toLowerCase())));
+  rows.sort((a, b) => productName(v(a, 'G')).localeCompare(productName(v(b, 'G'))) || (parseDate(v(a, 'J')) || 0) - (parseDate(v(b, 'J')) || 0));
+  const meetRows = meetings.filter(r => (!f.adv || v(r, 'C') === f.adv) && (!f.q || r.search.includes(f.q.toLowerCase())));
+  return `<h2>לקוחות</h2>${tabs}
+    <div class="chips">${[['', 'הכול'], ...CLIENT_STAGES.map(g => [g, productName(g)])].map(([k, t]) =>
+      `<button class="chip ${f.prod === k ? 'on' : ''}" onclick="setCF('prod','${k}')">${esc(t)}</button>`).join('')}</div>
+    <div class="filters">
+      <select onchange="setCF('adv',this.value)">${opt('', 'כל היועצים', f.adv)}${advisors.map(a => opt(a, a, f.adv)).join('')}</select>
+      <input type="search" placeholder="חיפוש לקוח" value="${esc(f.q)}" onchange="setCF('q',this.value)">
+    </div>
+    <h3>לקוחות פעילים (${rows.length})</h3>
+    ${rows.length ? rows.map(clientItem).join('') : '<div class="card muted">אין לקוחות להצגה.</div>'}
+    ${f.prod ? '' : `<h3>פגישות עתידיות (${meetRows.length})</h3>${meetRows.length ? meetRows.map(meetingItem).join('') : '<div class="card muted">אין פגישות פתוחות.</div>'}`}`;
+}
+function clientsDash(active, meetings) {
+  const t = today0(), thisM = ym(t);
+  const all = S.rows.filter(r => CLIENT_STAGES.includes(v(r, 'G')));
+  const advisors = [...new Set(active.map(r => v(r, 'C')).filter(Boolean))].sort();
+  const prods = CLIENT_STAGES.map(productName);
+  const by = (rows, a, pr) => rows.filter(r => v(r, 'C') === a && (!pr || productName(v(r, 'G')) === pr)).length;
+  const advRows = advisors.map(a => [esc(a), ...prods.map(pr => by(active, a, pr)), active.filter(r => v(r, 'C') === a).length]);
+  advRows.push(['<b>סה"כ</b>', ...prods.map(pr => `<b>${active.filter(r => productName(v(r, 'G')) === pr).length}</b>`), `<b>${active.length}</b>`]);
+  const joined = all.filter(r => ym(parseDate(v(r, 'J'))) === thisM);
+  const ended = all.filter(r => v(r, 'H') === 'סיום' && ym(parseDate(v(r, 'L'))) === thisM);
+  const endedAll = all.filter(r => v(r, 'H') === 'סיום' && num(v(r, 'AM')) > 0);
+  const avgMonths = endedAll.length ? (endedAll.reduce((s, r) => s + num(v(r, 'AM')), 0) / endedAll.length / 30.44).toFixed(1) : '—';
+  const income = active.reduce((s, r) => s + num(v(r, 'O')), 0);
+  const toAdv = active.reduce((s, r) => s + num(v(r, 'P')), 0);
+  const upcoming = meetings.filter(r => { const d = parseDate(v(r, 'L')); return d && d >= t; }).length;
+  const summary = table(['מבט על', 'כמות / סכום'], [
+    ['לקוחות פעילים', `<b>${active.length}</b>`],
+    ['הצטרפו החודש', joined.length],
+    ['סיימו החודש', ended.length],
+    ['ממוצע אורך ליווי (לקוחות שסיימו)', avgMonths + ' חודשים'],
+    ['תשלום לקוחות פעילים (סכום עמודה O)', money(income)],
+    ['תשלום ליועצים (סכום עמודה P)', money(toAdv)],
+    ['פגישות עתידיות עם מועד', upcoming]
+  ]);
+  const cap = S.data.capacity;
+  const capTable = cap ? `<h3>תפוסת יועצים</h3>` + table(cap[0].map(esc), cap.slice(1).map(r => r.map(esc))) : '';
+  return `<div class="muted" style="margin:-4px 2px 8px">נכון ל־${new Date(S.loadedAt).toLocaleString('he-IL')}</div>
+    ${summary}<div style="height:10px"></div>
+    <h3>לקוחות פעילים לפי יועץ ומוצר</h3>${table(['יועץ', ...prods, 'סה"כ'], advRows, { totalLast: true })}
+    ${capTable}`;
+}
+
 /* ---------- כרטיס ליד ---------- */
 function rowByNum(n) { return S.rows.find(r => r.row === n); }
 function openLead(n, keepScroll) {
@@ -504,9 +603,12 @@ function leadPanel(r) {
 
   <div class="card">
     <label>מצב</label>
-    <div class="row">${S.data.statuses.map(s => `<button class="btn ${s === H ? 'on' : 'light'}" onclick="setStatus('${s}')">${s}</button>`).join('')}</div>
-    <label>העברה לטיפול</label>
-    <div class="row">${S.data.handlers.map(h => `<button class="btn ${h === C ? 'on' : 'light'}" ${h === C ? 'disabled' : ''} onclick="transfer('${h}')">${h}</button>`).join('')}</div>
+    <div class="row">${(r.isLead ? S.data.statuses : ['פעיל', 'סיום']).map(s => `<button class="btn ${s === H ? 'on' : 'light'}" onclick="setStatus('${s}')">${s === 'סיום' && !r.isLead ? 'סיום ליווי' : s}</button>`).join('')}</div>
+    ${r.isLead ? `<label>העברה לטיפול</label>
+    <div class="row">${S.data.handlers.map(h => `<button class="btn ${h === C ? 'on' : 'light'}" ${h === C ? 'disabled' : ''} onclick="transfer('${h}')">${h}</button>`).join('')}</div>`
+    : `<label>החלפת יועץ</label>
+    <div class="row"><select id="advSel" style="max-width:220px">${(S.data.lists.C || []).map(a => `<option ${a === C ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select>
+      <button class="btn light" onclick="const v=document.getElementById('advSel').value; if (v !== '${esc(C)}') transfer(v)">החלף</button></div>`}
   </div>
 
   ${r.isLead ? `<div class="card"><details id="saleBox"><summary>&#x1F4B0; נסגרה מכירה - פתיחת שורת רכש</summary>${saleForm(r)}</details></div>` : ''}
@@ -541,6 +643,7 @@ async function setNext(value) {
   openLead(S.current.row, true);
 }
 async function setStatus(status) {
+  if (status === 'סיום' && !S.current.isLead && !confirm('לסיים את ' + v(S.current, 'G') + ' של ' + v(S.current, 'A') + '?\nתאריך הסיום יהיה היום.')) return;
   if (status === 'נמכר' && S.current.isLead) {
     const box = document.getElementById('saleBox');
     if (box && !confirm('לסמן "נמכר" בלי לפתוח שורת רכש?\nלחץ "ביטול" כדי למלא את פרטי הרכישה.')) { box.open = true; box.scrollIntoView({ behavior: 'smooth' }); return; }
@@ -549,7 +652,7 @@ async function setStatus(status) {
   openLead(S.current.row, true);
 }
 async function transfer(to) {
-  if (!confirm('להעביר את ' + v(S.current, 'A') + ' לטיפול ' + to + '?')) return;
+  if (!confirm((S.current.isLead ? 'להעביר את ' + v(S.current, 'A') + ' לטיפול ' : 'להחליף את היועץ של ' + v(S.current, 'A') + ' ל') + to + '?')) return;
   await writeCall('transfer', { ...ref(), to }, 'הליד הועבר ל' + to);
   openLead(S.current.row, true);
 }
