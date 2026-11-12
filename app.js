@@ -735,7 +735,7 @@ function leadPanel(r) {
     <label>תאריך חזרה${v(r, 'K') ? ' (כרגע: ' + esc(v(r, 'K')) + ')' : ''}</label>
     <div class="row">${quick.map(([t, d]) => `<button class="btn light" onclick="setNext('${iso(addDays(today0(), d))}')">${t}</button>`).join('')}
       <button class="btn light" onclick="setNext('מלאי')">מלאי</button></div>
-    <div class="row" style="margin-top:6px"><input type="date" id="nextDate" style="max-width:200px" value="${toIso(v(r, 'K'))}"><button class="btn" onclick="setNext(document.getElementById('nextDate').value)">קבע</button>
+    <div class="row" style="margin-top:6px"><label style="margin:0">מועד אחר:</label><input type="date" id="nextDate" style="max-width:200px" value="${toIso(v(r, 'K'))}" onchange="if (this.value && this.value !== '${toIso(v(r, 'K'))}') setNext(this.value)"><button class="btn" onclick="const d=document.getElementById('nextDate').value; if (!d) return toast('בחר תאריך', true); setNext(d)">קבע</button>
       ${v(r, 'K') ? `<button class="btn ghost" onclick="setNext('')">נקה</button>` : ''}</div>
   </div>
 
@@ -751,7 +751,9 @@ function leadPanel(r) {
 
   ${r.isLead ? `<div class="card"><details id="saleBox"><summary>&#x1F4B0; נסגרה מכירה - פתיחת שורת רכש</summary>${saleForm(r)}</details></div>` : ''}
 
-  <div class="card"><label>סיכום שיחה / הערות</label><div class="notes">${esc(v(r, 'I')) || '<span class="muted">אין עדיין הערות</span>'}</div></div>
+  <div class="card"><div class="row" style="justify-content:space-between"><label style="margin:0">סיכום שיחה / הערות</label>
+    <button class="btn ghost" style="padding:4px 10px" onclick="editNotes()" title="עריכת הסיכום">&#x270F; עריכה</button></div>
+    <div id="notesBox"><div class="notes">${esc(v(r, 'I')) || '<span class="muted">אין עדיין הערות</span>'}</div></div></div>
 
   ${rel.length ? `<h3>שורות נוספות של אותו לקוח (${rel.length})</h3>${rel.map(leadItem).join('')}` : ''}
 
@@ -773,6 +775,19 @@ async function addNote() {
   if (!text) return toast('ההערה ריקה', true);
   await writeCall('addNote', { ...ref(), text }, 'ההערה נשמרה');
   const d = restore(DRAFT_KEY) || {}; delete d[S.currentId + ':note']; store(DRAFT_KEY, d);
+  openLead(S.current.row, true);
+}
+/** עריכת סיכום השיחה ישירות בכרטיס (בלי לרדת ל"כל השדות") */
+function editNotes() {
+  const cur = v(S.current, 'I'), box = document.getElementById('notesBox');
+  box.innerHTML = `<textarea id="notesEdit" data-old="${esc(S.current.values[ci('I')] || '')}" style="min-height:220px">${esc(S.current.values[ci('I')] || '')}</textarea>
+    <div class="row" style="margin-top:6px"><button class="btn" onclick="saveNotes()">שמירה</button><button class="btn ghost" onclick="openLead(S.current.row, true)">ביטול</button></div>`;
+  const t = document.getElementById('notesEdit'); t.focus(); t.setSelectionRange(t.value.length, t.value.length);
+}
+async function saveNotes() {
+  const t = document.getElementById('notesEdit');
+  if (t.value === t.dataset.old) return openLead(S.current.row, true);
+  await writeCall('update', { ...ref(), changes: { I: { old: t.dataset.old, value: t.value } } }, 'הסיכום נשמר');
   openLead(S.current.row, true);
 }
 async function setNext(value) {
