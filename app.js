@@ -733,9 +733,9 @@ function leadPanel(r) {
 
   <div class="card">
     <label>תאריך חזרה${v(r, 'K') ? ' (כרגע: ' + esc(v(r, 'K')) + ')' : ''}</label>
-    <div class="row">${quick.map(([t, d]) => `<button class="btn light" onclick="setNext('${iso(addDays(today0(), d))}')">${t}</button>`).join('')}
+    <div class="row">${quick.map(([t, d]) => `<button class="btn light" onclick="pickNext('${iso(addDays(today0(), d))}')">${t}</button>`).join('')}
       <button class="btn light" onclick="setNext('מלאי')">מלאי</button></div>
-    <div class="row" style="margin-top:6px"><label style="margin:0">מועד אחר:</label><input type="date" id="nextDate" style="max-width:200px" value="${toIso(v(r, 'K'))}" onchange="if (this.value && this.value !== '${toIso(v(r, 'K'))}') setNext(this.value)"><button class="btn" onclick="const d=document.getElementById('nextDate').value; if (!d) return toast('בחר תאריך', true); setNext(d)">קבע</button>
+    <div class="row" style="margin-top:6px"><label style="margin:0">מועד אחר:</label><input type="date" id="nextDate" style="max-width:200px" value="${toIso(v(r, 'K'))}" oninput="showDay(this.value)" onchange="showDay(this.value)"><span id="nextDay" class="muted" style="min-width:60px">${dayName(toIso(v(r, 'K')))}</span><button class="btn" onclick="const d=document.getElementById('nextDate').value; if (!d) return toast('בחר תאריך', true); setNext(d)">&#x2713; אישור</button>
       ${v(r, 'K') ? `<button class="btn ghost" onclick="setNext('')">נקה</button>` : ''}</div>
   </div>
 
@@ -789,6 +789,21 @@ async function saveNotes() {
   if (t.value === t.dataset.old) return openLead(S.current.row, true);
   await writeCall('update', { ...ref(), changes: { I: { old: t.dataset.old, value: t.value } } }, 'הסיכום נשמר');
   openLead(S.current.row, true);
+}
+function dayName(isoVal) { if (!isoVal) return ''; const [y, m, d] = isoVal.split('-').map(Number); return DAY_NAMES[new Date(y, m - 1, d).getDay()]; }
+const DAY_NAMES = ['יום ראשון', 'יום שני', 'יום שלישי', 'יום רביעי', 'יום חמישי', 'יום שישי', 'שבת'];
+function showDay(isoVal) {
+  const el = document.getElementById('nextDay'); if (!el) return;
+  if (!isoVal) { el.textContent = ''; el.style.color = ''; return; }
+  const [y, m, d] = isoVal.split('-').map(Number), wd = new Date(y, m - 1, d).getDay();
+  el.textContent = DAY_NAMES[wd];
+  el.style.color = (wd === 5 || wd === 6) ? '#c62828' : '';
+  el.style.fontWeight = (wd === 5 || wd === 6) ? '700' : '';
+}
+function pickNext(isoVal) {
+  const inp = document.getElementById('nextDate'); if (!inp) return;
+  inp.value = isoVal; showDay(isoVal);
+  inp.style.outline = '2px solid #14CCAB'; setTimeout(() => { inp.style.outline = ''; }, 900);
 }
 async function setNext(value) {
   if (value === undefined) return;
