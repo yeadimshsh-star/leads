@@ -683,6 +683,7 @@ async function saveShift(id) {
 /* ---------- כרטיס ליד ---------- */
 function rowByNum(n) { return S.rows.find(r => r.row === n); }
 function openLead(n, keepScroll) {
+  S.pendNext = '';
   const r = rowByNum(n);
   if (!r) { closeLead(true); return; }
   if (window.PWA && !keepScroll) {
@@ -734,8 +735,8 @@ function leadPanel(r) {
   <div class="card">
     <label>תאריך חזרה${v(r, 'K') ? ' (כרגע: ' + esc(v(r, 'K')) + ')' : ''}</label>
     <div class="row">${quick.map(([t, d]) => `<button class="btn light" onclick="pickNext('${iso(addDays(today0(), d))}')">${t}</button>`).join('')}
-      <button class="btn light" onclick="setNext('מלאי')">מלאי</button></div>
-    <div class="row" style="margin-top:6px"><label style="margin:0">מועד אחר:</label><input type="date" id="nextDate" style="max-width:200px" value="${toIso(v(r, 'K'))}" oninput="showDay(this.value)" onchange="showDay(this.value)"><span id="nextDay" class="muted" style="min-width:60px">${dayName(toIso(v(r, 'K')))}</span><button class="btn" onclick="const d=document.getElementById('nextDate').value; if (!d) return toast('בחר תאריך', true); setNext(d)">&#x2713; אישור</button>
+      <button class="btn light" onclick="pickNext('מלאי')">מלאי</button></div>
+    <div class="row" style="margin-top:6px"><label style="margin:0">מועד אחר:</label><input type="date" id="nextDate" style="max-width:200px" value="${toIso(v(r, 'K'))}" oninput="S.pendNext='';showDay(this.value)" onchange="S.pendNext='';showDay(this.value)"><span id="nextDay" class="muted" style="min-width:60px">${dayName(toIso(v(r, 'K')))}</span><button class="btn" onclick="const d=document.getElementById('nextDate').value || S.pendNext; if (!d) return toast('בחר תאריך', true); setNext(d)">&#x2713; אישור</button>
       ${v(r, 'K') ? `<button class="btn ghost" onclick="setNext('')">נקה</button>` : ''}</div>
   </div>
 
@@ -802,7 +803,11 @@ function showDay(isoVal) {
 }
 function pickNext(isoVal) {
   const inp = document.getElementById('nextDate'); if (!inp) return;
-  inp.value = isoVal; showDay(isoVal);
+  if (isoVal === 'מלאי') {
+    S.pendNext = 'מלאי'; inp.value = '';
+    const el = document.getElementById('nextDay');
+    if (el) { el.textContent = 'מלאי'; el.style.color = '#003DB8'; el.style.fontWeight = '700'; }
+  } else { S.pendNext = ''; inp.value = isoVal; showDay(isoVal); }
   inp.style.outline = '2px solid #14CCAB'; setTimeout(() => { inp.style.outline = ''; }, 900);
 }
 async function setNext(value) {
