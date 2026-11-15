@@ -750,6 +750,8 @@ function leadPanel(r) {
       <button class="btn light" onclick="const v=document.getElementById('advSel').value; if (v !== '${esc(C)}') transfer(v)">החלף</button></div>`}
   </div>
 
+  ${!r.isLead && v(r, 'G') === 'רכש פגישה' && H === 'פעיל' ? bookingCard(r) : ''}
+
   ${r.isLead ? `<div class="card"><details id="saleBox"><summary>&#x1F4B0; נסגרה מכירה - פתיחת שורת רכש</summary>${saleForm(r)}</details></div>` : ''}
 
   <div class="card"><div class="row" style="justify-content:space-between"><label style="margin:0">סיכום שיחה / הערות</label>
@@ -839,9 +841,66 @@ async function pickTemplate() {
     box.innerHTML = '<label>בחר טקסט לשליחה:</label>' + tpls.map((t, i) => `<button class="btn ghost tpl" data-i="${i}">${esc(t.title)}</button>`).join('');
     box.querySelectorAll('.tpl').forEach(b => b.onclick = () => {
       const t = tpls[+b.dataset.i];
-      window.open('https://wa.me/' + waPhone(v(S.current, 'E')) + '?text=' + encodeURIComponent(t.text), '_blank');
+      waSend(v(S.current, 'E'), t.text);
     });
   } catch (e) { box.innerHTML = ''; toast(e.message || String(e), true); }
+}
+
+/** שליחת טקסט בוואטסאפ. api.whatsapp.com ולא wa.me – ההפניה של wa.me משבשת אימוג'י בחלק מהמכשירים. */
+function waSend(phone, text) {
+  window.open('https://api.whatsapp.com/send?phone=' + waPhone(phone) + '&text=' + encodeURIComponent(text), '_blank');
+}
+
+/* ---------- קביעת פגישה עם אפרים (רק בשורת "רכש פגישה" פעילה) ---------- */
+function ddmm(isoD) { const [y, m, d] = isoD.split('-'); return d + '.' + m + '.' + y.slice(2); }
+function bookingCard(r) {
+  S.bookMode = '';
+  return `<div class="card" id="bookCard"><label>&#x1F4C5; קביעת פגישה עם אפרים${v(r, 'L') ? ' (תאריך בגליון: ' + esc(v(r, 'L')) + ')' : ''}</label>
+    <div class="row"><span class="muted">סוג הפגישה:</span>
+      <button class="btn light" id="bm_zoom" onclick="setBookMode('zoom')">זום</button>
+      <button class="btn light" id="bm_front" onclick="setBookMode('front')">פרונטלי</button>
+      <button class="btn" onclick="loadSlots()">הצג מועדים פנויים</button></div>
+    <div id="slots"></div></div>`;
+}
+function setBookMode(m) {
+  S.bookMode = m;
+  ['zoom', 'front'].forEach(x => { const b = document.getElementById('bm_' + x); if (b) b.className = 'btn ' + (x === m ? 'on' : 'light'); });
+}
+async function loadSlots() {
+  const box = document.getElementById('slots');
+  box.innerHTML = '<div class="muted" style="margin-top:8px">בודק ביומן של אפרים…</div>';
+  try {
+    const res = await call('slots', ref());
+    S.slots = res;
+    let html = '';
+    if (res.booked) {
+      const b = res.booked;
+      html += `<div class="notes" style="margin-top:8px">&#x2705; כבר נקבעה פגישה: יום ${b.day} ${ddmm(b.date)} בשעה ${b.time} (${b.mode === 'zoom' ? 'זום' : 'פרונטלי'}).<br>בחירת מועד אחר תעדכן את אותו זימון.</div>`;
+      if (!S.bookMode) setBookMode(b.mode);
+    }
+    if (!res.windows.length) html += '<div class="muted" style="margin-top:8px">אין כרגע מועדים פנויים. אפרים פותח מועדים ביומן שלו (אירוע בשם "פגישה פנויה") – בקש ממנו לפתוח מועד, ואז לחץ שוב על "הצג מועדים פנויים".</div>';
+    res.windows.forEach(w => {
+      html += `<div style="margin-top:10px"><b>יום ${w.day} ${ddmm(w.date)}</b> <span class="muted">· אפרים פנוי ${w.from}–${w.to}</span></div>
+        <div class="row" style="margin-top:4px">${w.starts.map(t => `<button class="btn light" onclick="pickSlot('${w.date}','${t}')">${t}</button>`).join('')}</div>`;
+    });
+    if (res.windows.length) html += '<div class="muted" style="margin-top:6px">הפגישה נקבעת לשעה. השעות שמוצגות הן שעות התחלה אפשריות.</div>';
+    box.innerHTML = html;
+  } catch (e) { box.innerHTML = ''; toast(e.message || String(e), true); }
+}
+async function pickSlot(date, time) {
+  if (!S.bookMode) return toast('בחר קודם זום או פרונטלי', true);
+  const r = S.current, mode = S.bookMode === 'zoom' ? 'בזום' : 'פרונטלית במשרד';
+  const again = S.slots && S.slots.booked;
+  if (!confirm(`${again ? 'לשנות את מועד הפגישה' : 'לקבוע פגישה'} של ${v(r, 'A')} עם אפרים\nל${ddmm(date)} בשעה ${time}, ${mode}?\n\nהזימון יישלח במייל לאפרים, לנריה${v(r, 'D').includes('@') ? ' וללקוח' : ''}.`)) return;
+  const res = await writeCall('book', { ...ref(), date, time, mode: S.bookMode }, again ? 'מועד הפגישה עודכן ביומן' : 'הפגישה נקבעה ביומן');
+  const phone = v(r, 'E'), m = S.bookMode;
+  openLead(r.row, true);
+  const box = document.getElementById('slots');
+  if (!box) return;
+  S.lastWa = res.wa;
+  box.innerHTML = `<div class="notes" style="margin-top:8px">&#x2705; ${again ? 'המועד עודכן' : 'הפגישה נקבעה'}: ${ddmm(date)} בשעה ${time} (${m === 'zoom' ? 'זום' : 'פרונטלי'}). התאריך נכתב בעמודה L.</div>
+    ${res.noEmail ? '<div class="muted" style="margin-top:6px;color:#b00">ללקוח אין מייל בגליון, ולכן הזימון לא נשלח אליו. שלח לו את הפרטים בוואטסאפ.</div>' : ''}
+    ${phone ? `<div class="row" style="margin-top:8px"><button class="btn teal" onclick="waSend('${esc(phone)}', S.lastWa)">${ICON.wa} שלח ללקוח בוואטסאפ</button></div>` : ''}`;
 }
 
 /* ---------- מכירה ---------- */
