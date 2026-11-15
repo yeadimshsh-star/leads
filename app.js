@@ -860,7 +860,20 @@ function bookingCard(r) {
       <button class="btn light" id="bm_zoom" onclick="setBookMode('zoom')">זום</button>
       <button class="btn light" id="bm_front" onclick="setBookMode('front')">פרונטלי</button>
       <button class="btn" onclick="loadSlots()">הצג מועדים פנויים</button></div>
+    ${v(r, 'E') ? `<div class="row" style="margin-top:8px"><button class="btn teal" onclick="sendMeetText()">${ICON.wa} שלח ללקוח בוואטסאפ: שאלון ותשלום (ומועד אם נקבע)</button></div>` : ''}
     <div id="slots"></div></div>`;
+}
+/** ההודעה ללקוח: אם נקבעה פגישה – מועד, יומן, שאלון ותשלום; אם עוד לא – שאלון ותשלום, והמועד בהמשך */
+// נפתח חלון מיד בלחיצה (אחרת הדפדפן בטלפון חוסם), ואז מכוונים אותו לוואטסאפ כשהטקסט מגיע מהשרת
+async function sendMeetText() {
+  const phone = v(S.current, 'E');
+  const w = window.open('about:blank', '_blank');
+  busy(true);
+  try {
+    const res = await call('meetText', ref());
+    const url = 'https://api.whatsapp.com/send?phone=' + waPhone(phone) + '&text=' + encodeURIComponent(res.text);
+    if (w && !w.closed) w.location.href = url; else window.open(url, '_blank');
+  } catch (e) { if (w && !w.closed) w.close(); toast(e.message || String(e), true); } finally { busy(false); }
 }
 function setBookMode(m) {
   S.bookMode = m;
