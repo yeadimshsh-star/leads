@@ -891,7 +891,7 @@ async function pickSlot(date, time) {
   if (!S.bookMode) return toast('בחר קודם זום או פרונטלי', true);
   const r = S.current, mode = S.bookMode === 'zoom' ? 'בזום' : 'פרונטלית במשרד';
   const again = S.slots && S.slots.booked;
-  if (!confirm(`${again ? 'לשנות את מועד הפגישה' : 'לקבוע פגישה'} של ${v(r, 'A')} עם אפרים\nל${ddmm(date)} בשעה ${time}, ${mode}?\n\nהזימון יישלח במייל לאפרים, לנריה${v(r, 'D').includes('@') ? ' וללקוח' : ''}.`)) return;
+  if (!confirm(`${again ? 'לשנות את מועד הפגישה' : 'לקבוע פגישה'} של ${v(r, 'A')} עם אפרים\nל${ddmm(date)} בשעה ${time}, ${mode}?\n\n${v(r, 'A').trim().startsWith('בדיקה') ? 'שורת בדיקה: הזימון ייכנס רק ליומן של שמואל, בלי מוזמנים.' : 'הזימון יישלח במייל לאפרים, לנריה' + (v(r, 'D').includes('@') ? ' וללקוח' : '') + '.'}`)) return;
   const res = await writeCall('book', { ...ref(), date, time, mode: S.bookMode }, again ? 'מועד הפגישה עודכן ביומן' : 'הפגישה נקבעה ביומן');
   const phone = v(r, 'E'), m = S.bookMode;
   openLead(r.row, true);
