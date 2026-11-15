@@ -143,12 +143,25 @@ function buildRows() {
     const k = v(r, 'K'), kd = parseDate(k);
     r.kTime = kd ? kd.getTime() : null;
     r.due = k === 'מלאי' ? 'stock' : !kd ? (k ? 'other' : 'none') : r.kTime < t ? 'overdue' : r.kTime === t ? 'today' : 'future';
+    r.fresh = r.isLead && r.active && neverContacted(values[8]);
     r.fp = [values[0], values[4], values[6], values[9]].join('|');
     r.search = (values[0] + ' ' + values[1] + ' ' + values[3] + ' ' + values[4] + ' ' + values[5] + ' ' + values[8]).toLowerCase();
     return r;
   }).filter(r => !r.empty);
 }
 const openLeads = () => S.rows.filter(r => r.isLead && r.active);
+/** ליד שעוד לא דיברו איתו: אין בסיכום אף שורה של אדם. נחשבות "לא קשר" רק שורות של מערכות ייבוא
+ *  (ManyChat, וובינר וכד') ושורות מערכת בסוגריים כמו "[הועבר לטיפול …]". */
+const IMPORT_AUTHORS = ['ManyChat', 'וובינר', 'ייבוא', 'טופס', 'אתר', 'קלוד'];
+function neverContacted(notes) {
+  return String(notes || '').split('\n').map(x => x.trim()).filter(Boolean).every(line => {
+    const m = line.match(/^\d{1,2}[./]\d{1,2}[./]\d{2,4}\s+([^:]{1,30}):\s*(.*)$/);
+    if (!m) return false;
+    const who = m[1].trim(), text = m[2].trim();
+    if (IMPORT_AUTHORS.some(a => who.startsWith(a))) return true;
+    return /^\[[^\]]*\]$/.test(text); // שורת מערכת בלבד, למשל העברה בין מטפלים
+  });
+}
 const byDue = (a, b) => (a.kTime ?? 9e15) - (b.kTime ?? 9e15);
 
 /* ---------- ניווט (כולל כפתור "חזרה" של המכשיר באפליקציה המותקנת) ---------- */
@@ -226,6 +239,7 @@ function dueBadge(r) {
   if (r.isLead && r.active) return '<span class="badge gray">אין תאריך חזרה</span>';
   return '';
 }
+const freshBadge = r => r.fresh ? '<span class="badge purple">&#x1F44B; עוד לא דיברו איתו</span>' : '';
 function statusBadge(r) {
   const h = v(r, 'H');
   const cls = h === 'פעיל' ? 'green' : h === 'נמכר' ? '' : 'gray';
@@ -233,12 +247,12 @@ function statusBadge(r) {
 }
 function leadItem(r) {
   const phone = v(r, 'E');
-  const cls = r.active && (r.due === 'overdue' || r.due === 'today') ? r.due : '';
+  const cls = r.fresh ? 'fresh' : r.active && (r.due === 'overdue' || r.due === 'today') ? r.due : '';
   return `<div class="card lead ${cls}" data-id="${esc(v(r, 'AO'))}" onclick="openLead(${r.row})">
     <div class="main">
       <div class="name">${esc(v(r, 'A') || '(ללא שם)')}</div>
       <div class="sub">${esc(v(r, 'G'))} · ${esc(v(r, 'C'))}</div>
-      <div>${statusBadge(r)}${dueBadge(r)}</div>
+      <div>${freshBadge(r)}${statusBadge(r)}${dueBadge(r)}</div>
     </div>
     <div class="acts" onclick="event.stopPropagation()">
       ${phone ? `<a class="icon ph" href="tel:${esc(phone)}" onclick="return dial(this)" title="חיוג">${ICON.phone}</a>
@@ -282,17 +296,22 @@ function saveOrder() {
 function jumpTo(id) { const el = document.getElementById(id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 function viewToday() {
   const mine = openLeads().filter(r => v(r, 'C') === S.data.me);
-  const over = manualSort(mine.filter(r => r.due === 'overdue'));
-  const tod = manualSort(mine.filter(r => r.due === 'today'));
-  const none = manualSort(mine.filter(r => r.due === 'none' || r.due === 'other'));
-  const week = manualSort(mine.filter(r => r.due === 'future' && r.kTime <= addDays(today0(), 7).getTime()));
+  // לידים שעוד לא דיברו איתם – למעלה, ובנפרד (לא מופיעים שוב בשאר הקבוצות)
+  const fresh = manualSort(mine.filter(r => r.fresh));
+  const rest = mine.filter(r => !r.fresh);
+  const over = manualSort(rest.filter(r => r.due === 'overdue'));
+  const tod = manualSort(rest.filter(r => r.due === 'today'));
+  const none = manualSort(rest.filter(r => r.due === 'none' || r.due === 'other'));
+  const week = manualSort(rest.filter(r => r.due === 'future' && r.kTime <= addDays(today0(), 7).getTime()));
   return `<h2>היום של ${esc(S.data.me)}</h2>${clockCard()}
     <div class="stats">
+      ${fresh.length ? `<div class="stat purple" onclick="jumpTo('sec-fresh')"><b>${fresh.length}</b><span>עוד לא דיברו</span></div>` : ''}
       <div class="stat red" onclick="jumpTo('sec-over')"><b>${over.length}</b><span>באיחור</span></div>
       <div class="stat orange" onclick="jumpTo('sec-today')"><b>${tod.length}</b><span>להיום</span></div>
       <div class="stat" onclick="S.f.who='me';S.f.stage='leads';S.f.status='פעיל';S.f.due='';S.f.q='';go('all')"><b>${mine.length}</b><span>לידים פתוחים שלי</span></div>
     </div>
     <div class="muted" style="margin:-2px 2px 8px">לסידור ידני: לחיצה ארוכה על ליד וגרירה. הסדר נשמר לך בלבד.</div>
+    ${fresh.length ? `<h3 id="sec-fresh" style="color:#6B2FD6">&#x1F44B; עוד לא דיברו איתם (${fresh.length}): קודם כול מתקשרים</h3>${sortList(fresh)}` : ''}
     <h3 id="sec-over">באיחור (${over.length})</h3>${sortList(over)}
     <h3 id="sec-today">להיום (${tod.length})</h3>${sortList(tod)}
     <h3>ללא תאריך חזרה (${none.length})</h3>${sortList(none)}
@@ -319,6 +338,7 @@ function filtered() {
     if (f.due === 'week' && !(r.due === 'future' && r.kTime <= t7)) return false;
     if (f.due === 'none' && r.due !== 'none') return false;
     if (f.due === 'stock' && r.due !== 'stock') return false;
+    if (f.due === 'fresh' && !r.fresh) return false;
     return true;
   });
   if (f.status === 'פעיל') rows.sort(byDue);
@@ -345,7 +365,7 @@ function viewAll() {
     <div class="filters">
       <select onchange="setF('stage',this.value)">${opt('', 'כל השלבים', f.stage)}${opt('leads', 'לידים בלבד', f.stage)}${opt('buys', 'רכישות בלבד', f.stage)}${(L.G || []).map(g => opt(g, g, f.stage)).join('')}</select>
       <select onchange="setF('status',this.value)">${opt('', 'כל המצבים', f.status)}${statuses.map(s => opt(s, s, f.status)).join('')}</select>
-      <select onchange="setF('due',this.value)">${opt('', 'כל תאריכי החזרה', f.due)}${opt('late', 'באיחור', f.due)}${opt('today', 'היום', f.due)}${opt('week', 'בשבוע הקרוב', f.due)}${opt('none', 'ללא תאריך', f.due)}${opt('stock', 'מלאי', f.due)}</select>
+      <select onchange="setF('due',this.value)">${opt('', 'כל תאריכי החזרה', f.due)}${opt('late', 'באיחור', f.due)}${opt('today', 'היום', f.due)}${opt('week', 'בשבוע הקרוב', f.due)}${opt('none', 'ללא תאריך', f.due)}${opt('stock', 'מלאי', f.due)}${opt('fresh', 'עוד לא דיברו איתם', f.due)}</select>
       <input type="search" placeholder="חיפוש: שם, טלפון, מייל, הערות" value="${esc(f.q)}" oninput="S.f.q=this.value;clearTimeout(S.qt);S.qt=setTimeout(()=>{S.limit=100;document.getElementById('res').innerHTML=resList()},250)">
     </div>
     <div id="res">${resList(rows)}</div>`;
@@ -713,6 +733,7 @@ function leadPanel(r) {
   const rel = related(r);
   const quick = [['מחר', 1], ['3 ימים', 3], ['שבוע', 7], ['שבועיים', 14], ['חודש', 30]];
   return `<div class="top"><button class="btn ghost" onclick="closeLead()">&#x2192; חזרה</button><h2>${esc(v(r, 'A') || '(ללא שם)')}</h2></div>
+  ${r.fresh ? `<div class="card" style="background:#F3EDFF;border-color:#B79CF0;color:#4A1FA0"><b>&#x1F44B; עוד אף אחד לא יצר קשר עם הליד הזה.</b> זה הזמן להתקשר. אחרי השיחה רושמים הערה, והסימון יורד.</div>` : ''}
   <div class="card">
     <div>${statusBadge(r)}<span class="badge">${esc(v(r, 'G'))}</span><span class="badge">מטפל: ${esc(C || '—')}</span>${dueBadge(r)}</div>
     <div class="muted" style="margin-top:6px">שורה ${r.row} · תחילה ${esc(v(r, 'J') || '—')}${v(r, 'L') ? ' · סיום ' + esc(v(r, 'L')) : ''}${v(r, 'AE') ? ' · ערוץ: ' + esc(v(r, 'AE')) : ''}</div>
