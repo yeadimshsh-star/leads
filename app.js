@@ -876,6 +876,7 @@ async function loadSlots() {
     if (res.booked) {
       const b = res.booked;
       html += `<div class="notes" style="margin-top:8px">&#x2705; כבר נקבעה פגישה: יום ${b.day} ${ddmm(b.date)} בשעה ${b.time} (${b.mode === 'zoom' ? 'זום' : 'פרונטלי'}).<br>בחירת מועד אחר תעדכן את אותו זימון.</div>`;
+      if (res.wa && v(S.current, 'E')) { S.lastWa = res.wa; html += `<div class="row" style="margin-top:8px"><button class="btn teal" onclick="waSend('${esc(v(S.current, 'E'))}', S.lastWa)">${ICON.wa} שלח ללקוח בוואטסאפ: מועד, שאלון ותשלום</button></div>`; }
       if (!S.bookMode) setBookMode(b.mode);
     }
     if (!res.windows.length) html += '<div class="muted" style="margin-top:8px">אין כרגע מועדים פנויים. אפרים פותח מועדים ביומן שלו (אירוע בשם "פגישה פנויה") – בקש ממנו לפתוח מועד, ואז לחץ שוב על "הצג מועדים פנויים".</div>';
@@ -900,7 +901,7 @@ async function pickSlot(date, time) {
   S.lastWa = res.wa;
   box.innerHTML = `<div class="notes" style="margin-top:8px">&#x2705; ${again ? 'המועד עודכן' : 'הפגישה נקבעה'}: ${ddmm(date)} בשעה ${time} (${m === 'zoom' ? 'זום' : 'פרונטלי'}). התאריך נכתב בעמודה L.</div>
     ${res.noEmail ? '<div class="muted" style="margin-top:6px;color:#b00">ללקוח אין מייל בגליון, ולכן הזימון לא נשלח אליו. שלח לו את הפרטים בוואטסאפ.</div>' : ''}
-    ${phone ? `<div class="row" style="margin-top:8px"><button class="btn teal" onclick="waSend('${esc(phone)}', S.lastWa)">${ICON.wa} שלח ללקוח בוואטסאפ</button></div>` : ''}`;
+    ${phone ? `<div class="row" style="margin-top:8px"><button class="btn teal" onclick="waSend('${esc(phone)}', S.lastWa)">${ICON.wa} שלח ללקוח בוואטסאפ: מועד, שאלון ותשלום</button></div>` : ''}`;
 }
 
 /* ---------- מכירה ---------- */
