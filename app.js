@@ -31,6 +31,7 @@ async function writeCall(action, args, okMsg) {
   busy(true);
   try {
     const res = await call(action, args);
+    if (S.current) S.touchedId = S.currentId || S.current.row; // עבדו על הכרטיס – בסגירה נבדוק שיש תאריך חזרה
     (res.rows || []).forEach(patchRow);
     if (res.conflicts && res.conflicts.length) toast('חלק מהשדות שונו בינתיים בגליון ולא נשמרו: ' + res.conflicts.join(', ') + '. בדוק ונסה שוב.', true);
     else if (res.warnings && res.warnings.length) toast((okMsg ? okMsg + '. ' : '') + res.warnings.join('. '), true);
@@ -144,7 +145,11 @@ function buildRows() {
     const k = v(r, 'K'), kd = parseDate(k);
     r.kTime = kd ? kd.getTime() : null;
     r.due = k === 'מלאי' ? 'stock' : !kd ? (k ? 'other' : 'none') : !r.active ? 'closed' : r.kTime < t ? 'overdue' : r.kTime === t ? 'today' : 'future';
-    r.fresh = r.isLead && r.active && neverContacted(values[8]);
+    r.never = r.isLead && r.active && neverContacted(values[8]); // אף אחד עוד לא דיבר איתו
+    // ברשימת "עוד לא דיברו איתם" – רק אם אין תאריך חזרה (תאריך עתידי / היום / באיחור / מלאי – מופיע במקום שלו)
+    r.fresh = r.never && (r.due === 'none' || r.due === 'other');
+    // נריה רואה מהרכישות רק פגישות (לא לקוחות ליווי/צמיחה) – בתצוגה בלבד; השכר והדשבורד מחושבים מכל השורות
+    r.hidden = S.data.me === 'נריה' && !r.isLead && v(r, 'G') !== 'רכש פגישה';
     r.fp = [values[0], values[4], values[6], values[9]].join('|');
     r.search = (values[0] + ' ' + values[1] + ' ' + values[3] + ' ' + values[4] + ' ' + values[5] + ' ' + values[8]).toLowerCase();
     return r;
@@ -305,17 +310,19 @@ function viewToday() {
   const tod = manualSort(rest.filter(r => r.due === 'today'));
   const none = manualSort(rest.filter(r => r.due === 'none' || r.due === 'other'));
   const week = manualSort(rest.filter(r => r.due === 'future' && r.kTime <= addDays(today0(), 7).getTime()));
+  const stock = rest.filter(r => r.due === 'stock').length;
   return `<h2>היום של ${esc(S.data.me)}</h2>${clockCard()}
     <div class="stats">
-      ${fresh.length ? `<div class="stat purple" onclick="jumpTo('sec-fresh')"><b>${fresh.length}</b><span>עוד לא דיברו</span></div>` : ''}
-      <div class="stat red" onclick="jumpTo('sec-over')"><b>${over.length}</b><span>באיחור</span></div>
       <div class="stat orange" onclick="jumpTo('sec-today')"><b>${tod.length}</b><span>להיום</span></div>
+      <div class="stat red" onclick="jumpTo('sec-over')"><b>${over.length}</b><span>באיחור</span></div>
+      ${fresh.length ? `<div class="stat purple" onclick="jumpTo('sec-fresh')"><b>${fresh.length}</b><span>עוד לא דיברו</span></div>` : ''}
       <div class="stat" onclick="S.f.who='me';S.f.stage='leads';S.f.status='פעיל';S.f.due='';S.f.q='';go('all')"><b>${mine.length}</b><span>לידים פתוחים שלי</span></div>
+      <div class="stat" onclick="S.f.who='me';S.f.stage='leads';S.f.status='פעיל';S.f.due='stock';S.f.q='';go('all')"><b>${stock}</b><span>מלאי</span></div>
     </div>
     <div class="muted" style="margin:-2px 2px 8px">לסידור ידני: לחיצה ארוכה על ליד וגרירה. הסדר נשמר לך בלבד.</div>
-    ${fresh.length ? `<h3 id="sec-fresh" style="color:#6B2FD6">&#x1F44B; עוד לא דיברו איתם (${fresh.length}): קודם כול מתקשרים</h3>${sortList(fresh)}` : ''}
-    <h3 id="sec-over">באיחור (${over.length})</h3>${sortList(over)}
     <h3 id="sec-today">להיום (${tod.length})</h3>${sortList(tod)}
+    <h3 id="sec-over">באיחור (${over.length})</h3>${sortList(over)}
+    ${fresh.length ? `<h3 id="sec-fresh" style="color:#6B2FD6">&#x1F44B; עוד לא דיברו איתם (${fresh.length})</h3>${sortList(fresh)}` : ''}
     <h3>ללא תאריך חזרה (${none.length})</h3>${sortList(none)}
     <h3>בשבוע הקרוב (${week.length})</h3>${sortList(week)}`;
 }
@@ -324,6 +331,7 @@ function viewToday() {
 function filtered() {
   const f = S.f, me = S.data.me, t7 = addDays(today0(), 7).getTime();
   let rows = S.rows.filter(r => {
+    if (r.hidden) return false;
     // חיפוש טקסט מחפש בכל השורות, בלי קשר לשאר המסננים
     if (f.q) { const q = f.q.toLowerCase(), qd = q.replace(/\D/g, ''); return r.search.includes(q) || (qd.length >= 4 && r.search.replace(/-/g, '').includes(qd)); }
     const c = v(r, 'C');
@@ -721,13 +729,28 @@ function openLead(n, keepScroll) {
   p.scrollTop = keepScroll ? st : 0;
   restoreDrafts(p);
 }
+/** ליד פעיל שעבדו עליו בכרטיס (הערה, מצב, העברה, עריכה, הקלטה) ואין לו תאריך חזרה או מלאי */
+function missingNext() {
+  const r = S.current && (S.rows.find(x => S.currentId && v(x, 'AO') === S.currentId) || rowByNum(S.current.row));
+  return r && S.touchedId && S.touchedId === (S.currentId || S.current.row) && r.isLead && r.active && (r.due === 'none' || r.due === 'other');
+}
 function closeLead(fromHistory) {
+  if (missingNext()) {
+    if (confirm('לליד הזה אין תאריך חזרה או מלאי.\n\nאישור = לקבוע עכשיו\nביטול = לצאת בלי תאריך')) {
+      if (window.PWA && fromHistory) history.pushState({ view: S.view, lead: S.currentId || S.current.row }, '');
+      const c = document.getElementById('nextCard');
+      if (c) { c.scrollIntoView({ behavior: 'smooth', block: 'center' }); c.style.outline = '3px solid #F29900'; setTimeout(() => { c.style.outline = ''; }, 2500); }
+      return;
+    }
+    S.touchedId = null;
+  }
   if (window.PWA && !fromHistory && history.state && history.state.lead) { history.back(); return; }
+  S.touchedId = null;
   S.current = null; S.currentId = null; document.getElementById('sheet').classList.remove('open'); render();
 }
 /** שורות של אותו לקוח: אותו טלפון (ראשי או נוסף) או אותו מייל אמיתי (עם @). לא לפי שם, ולא "אין". */
 function related(r) {
-  return S.rows.filter(x => x.row !== r.row && sameClient(r, x));
+  return S.rows.filter(x => x.row !== r.row && !x.hidden && sameClient(r, x));
 }
 function leadPanel(r) {
   const phone = v(r, 'E'), phone2 = v(r, 'F'), email = v(r, 'D'), me = S.data.me;
@@ -735,7 +758,7 @@ function leadPanel(r) {
   const rel = related(r);
   const quick = [['מחר', 1], ['3 ימים', 3], ['שבוע', 7], ['שבועיים', 14], ['חודש', 30]];
   return `<div class="top"><button class="btn ghost" onclick="closeLead()">&#x2192; חזרה</button><h2>${esc(v(r, 'A') || '(ללא שם)')}</h2></div>
-  ${r.fresh ? `<div class="card" style="background:#F3EDFF;border-color:#B79CF0;color:#4A1FA0"><b>&#x1F44B; עוד אף אחד לא יצר קשר עם הליד הזה.</b> זה הזמן להתקשר. אחרי השיחה רושמים הערה, והסימון יורד.</div>` : ''}
+  ${r.never ? `<div class="card" style="background:#F3EDFF;border-color:#B79CF0;color:#4A1FA0"><b>&#x1F44B; עוד אף אחד לא יצר קשר עם הליד הזה.</b> זה הזמן להתקשר. אחרי השיחה רושמים הערה, והסימון יורד.</div>` : ''}
   <div class="card">
     <div>${statusBadge(r)}<span class="badge">${esc(v(r, 'G'))}</span><span class="badge">מטפל: ${esc(C || '—')}</span>${dueBadge(r)}</div>
     <div class="muted" style="margin-top:6px">שורה ${r.row} · תחילה ${esc(v(r, 'J') || '—')}${v(r, 'L') ? ' · סיום ' + esc(v(r, 'L')) : ''}${v(r, 'AE') ? ' · ערוץ: ' + esc(v(r, 'AE')) : ''}</div>
@@ -757,7 +780,7 @@ function leadPanel(r) {
 
   ${recCard(r)}
 
-  <div class="card">
+  <div class="card" id="nextCard">
     <label>תאריך חזרה${v(r, 'K') ? ' (כרגע: ' + esc(v(r, 'K')) + ')' : ''}</label>
     <div class="row">${quick.map(([t, d]) => `<button class="btn light" onclick="pickNext('${iso(addDays(today0(), d))}')">${t}</button>`).join('')}
       <button class="btn light" onclick="pickNext('מלאי')">מלאי</button></div>
@@ -872,6 +895,7 @@ async function uploadRec(input) {
     }
     if (!S.data.recStatus) S.data.recStatus = {};
     S.data.recStatus[id] = { pending: true };
+    if (S.current && v(S.current, 'AO') === id) S.touchedId = id;
     saveCache();
     recProg('&#x2705; ההקלטה הועלתה. התמלול והסיכום נעשים עכשיו ברקע ויופיעו בכרטיס לבד, בדרך כלל תוך כמה דקות. אפשר לסגור את האפליקציה.', -1);
     toast('ההקלטה הועלתה. הסיכום ייכנס לכרטיס תוך כמה דקות');
@@ -1190,7 +1214,7 @@ function viewNew() {
   return `<h2>ליד חדש</h2><div class="card">
     <div class="grid2">
       <div><label>שם מלא *</label><input id="n_A"></div>
-      <div><label>טלפון</label><input id="n_E" inputmode="tel" onblur="checkDup()"></div>
+      <div><label>טלפון *</label><input id="n_E" inputmode="tel" onblur="checkDup()"></div>
       <div><label>טלפון נוסף</label><input id="n_F" inputmode="tel"></div>
       <div><label>מייל</label><input id="n_D" inputmode="email" onblur="checkDup()"></div>
       <div><label>שלב *</label>${sel('n_G', leadStages, 'ליד פגישה')}</div>
@@ -1224,6 +1248,7 @@ async function newLead(force) {
   const g = id => document.getElementById(id).value.trim();
   const fields = { A: g('n_A'), E: g('n_E'), F: g('n_F'), D: g('n_D'), G: g('n_G'), C: g('n_C'), AE: g('n_AE'), AG: g('n_AG'), AH: g('n_AH'), K: g('n_K') };
   if (!fields.A) return toast('חסר שם', true);
+  if (!fields.E) return toast('חסר טלפון', true);
   const ph = fields.E.replace(/\D/g, '');
   if (fields.E && !(ph.length === 10 && ph.startsWith('0')) && !(ph.startsWith('972') && ph.length === 12)) {
     if (!confirm('מספר הטלפון לא נראה כמו 05XXXXXXXX. לשמור בכל זאת?')) return;
