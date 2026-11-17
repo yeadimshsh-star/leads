@@ -797,7 +797,7 @@ function recCard(r) {
     <div class="muted" style="margin-bottom:6px">בוחרים את קובץ ההקלטה מהטלפון. ההקלטה עוברת תמלול ונמחקת. התמלול המלא נשמר, וסיכום קצר נכנס לסיכום השיחה.</div>
     <input type="file" id="recFile" accept="audio/*,.m4a,.amr,.3gp,.opus,.aac,.mp3,.ogg,.wav,.flac" style="display:none" onchange="uploadRec(this)">
     <div class="row"><button class="btn" id="recBtn" onclick="document.getElementById('recFile').click()" ${v(r, 'AO') ? '' : 'disabled'}>&#x1F399; העלאת הקלטה</button></div>
-    <div id="recProg"></div>
+    <div id="recProg">${recStateHtml(v(r, 'AO'))}</div>
     ${list.length ? `<label style="margin-top:10px">תמלולים</label><div class="row">${list.map(t => `<button class="btn light" onclick="showTranscript('${esc(t.doc)}')">&#x1F4C4; תמלול מלא · ${esc(t.date)}${t.by ? ' · ' + esc(t.by) : ''}${t.dur ? ' · ' + Math.max(1, Math.round(t.dur / 60)) + ' דק&#x27;' : ''}</button>`).join('')}</div>` : ''}
     <div id="trBox"></div></div>`;
 }
@@ -826,75 +826,92 @@ function blobB64(blob) {
     fr.readAsDataURL(blob);
   });
 }
-const REC_RETRY_BTN = '<div class="row" style="margin-top:6px"><button class="btn" onclick="retryRecFinish()">נסה שוב את הסיכום</button></div>';
+/** מצב ההקלטות של הליד בכרטיס: בעיבוד ברקע / נכשל לאחרונה */
+function recStateHtml(id) {
+  const s = (S.data.recStatus || {})[id] || {};
+  if (s.pending) setTimeout(() => { if (S.current && v(S.current, 'AO') === id) pollRec(id, ref()); }, 0);
+  if (s.pending) return `<div class="notes" style="margin-top:8px">&#x23F3; הקלטה בעיבוד ברקע: התמלול והסיכום ייכנסו לכרטיס לבד, בדרך כלל תוך כמה דקות. אפשר לסגור את האפליקציה.</div>`;
+  if (s.error) return `<div class="notes" style="margin-top:8px;color:#b00">&#x26A0; עיבוד ההקלטה האחרונה נכשל: ${esc(s.error)}. אפשר להעלות אותה שוב.</div>`;
+  return '';
+}
+const sleep = ms => new Promise(ok => setTimeout(ok, ms));
+/** שליחת חלק אחד, עם עד 4 ניסיונות (קליטה חלשה בטלפון) */
+async function sendChunk(uid, off, data) {
+  for (let i = 1; ; i++) {
+    try { return await call('recChunk', { uid, off, data }); }
+    catch (e) {
+      if (i >= 4 || /השתבש|לא נמצאה|אין הרשאה/.test(e.message || '')) throw e;
+      recProg('בעיית קליטה, מנסה שוב (' + i + ')…', -1);
+      await sleep(3000 * i);
+    }
+  }
+}
 async function uploadRec(input) {
   const f = input.files && input.files[0]; input.value = '';
   if (!f || S.recBusy) return;
   const m = f.name.match(/\.([a-z0-9]+)$/i), ext = m ? m[1].toLowerCase() : '';
   const mb = f.size / 1048576;
   if (mb > REC_MAX_MB) return toast('ההקלטה גדולה מדי (' + Math.round(mb) + 'MB). המקסימום ' + REC_MAX_MB + 'MB.', true);
-  const r = S.current, base = ref();
+  const r = S.current, base = ref(), id = v(r, 'AO');
   const dur = await audioDuration(f);
   const len = dur ? ', ' + Math.max(1, Math.round(dur / 60)) + ' דקות' : '';
   if (!confirm('להעלות את "' + f.name + '" (' + mb.toFixed(1) + 'MB' + len + ') לתמלול ולסיכום של ' + v(r, 'A') + '?\n\nההקלטה עצמה לא נשמרת.')) return;
   S.recBusy = true;
   const btn = document.getElementById('recBtn'); if (btn) btn.disabled = true;
   window.onbeforeunload = () => 'ההעלאה עוד לא הסתיימה';
-  let uid = '', stage = 'upload';
+  let uid = '';
   try {
-    recProg('מתחיל העלאה…', 0);
+    recProg('מתחיל העלאה… (רק בזמן ההעלאה צריך להישאר במסך)', 0);
     const st = await call('recStart', { ...base, size: f.size, ext, dur });
     uid = st.uid;
     for (let off = 0; off < f.size; off += st.chunk) {
       const data = await blobB64(f.slice(off, off + st.chunk));
-      await call('recChunk', { uid, off, data });
+      await sendChunk(uid, off, data);
       const pct = Math.min(100, (off + st.chunk) / f.size * 100);
-      recProg('מעלה… ' + Math.round(pct) + '%', pct * 0.4);
+      recProg('מעלה… ' + Math.round(pct) + '% (רק בזמן ההעלאה צריך להישאר במסך)', pct);
     }
-    stage = 'transcribe';
-    let seg = 0, segs = 1, tries = 0;
-    while (true) {
-      recProg(segs > 1 ? 'מתמלל קטע ' + (seg + 1) + ' מתוך ' + segs + '…' : 'מתמלל… (כדקה-שתיים, לא לסגור את המסך)', 40 + seg / segs * 45);
-      const res = await call('recTranscribe', { uid, seg });
-      if (res.wait) { if (++tries > 8) throw new Error('Gemini עדיין מעבד את הקובץ. נסה שוב בעוד כמה דקות.'); continue; }
-      segs = res.segs;
-      if (res.done) break;
-      seg++;
-    }
-    stage = 'finish';
-    await finishRec(uid, base);
+    if (!S.data.recStatus) S.data.recStatus = {};
+    S.data.recStatus[id] = { pending: true };
+    saveCache();
+    recProg('&#x2705; ההקלטה הועלתה. התמלול והסיכום נעשים עכשיו ברקע ויופיעו בכרטיס לבד, בדרך כלל תוך כמה דקות. אפשר לסגור את האפליקציה.', -1);
+    toast('ההקלטה הועלתה. הסיכום ייכנס לכרטיס תוך כמה דקות');
+    pollRec(id, base);
   } catch (e) {
     const msg = e.message || String(e);
-    if (stage === 'finish' && uid) {
-      S.recUid = uid; S.recRef = base;
-      recProg('&#x26A0; התמלול נשמר, אבל הסיכום נכשל: ' + esc(msg), -1, REC_RETRY_BTN);
-    } else {
-      recProg('&#x26A0; ' + esc(msg), -1);
-      if (uid) call('recCancel', { uid }).catch(() => { });
-    }
+    recProg('&#x26A0; ' + esc(msg), -1);
+    if (uid) call('recCancel', { uid }).catch(() => { });
     toast(msg, true);
   } finally {
     S.recBusy = false; window.onbeforeunload = null;
     const b = document.getElementById('recBtn'); if (b) b.disabled = false;
   }
 }
-async function finishRec(uid, base) {
-  recProg('מסכם ומוחק את ההקלטה…', 90);
-  const res = await call('recFinish', { ...base, uid });
-  (res.rows || []).forEach(patchRow);
-  if (!S.data.transcripts) S.data.transcripts = {};
-  S.data.transcripts[res.id] = res.transcripts;
-  saveCache();
-  S.recBusy = false;
-  toast('הסיכום נוסף לסיכום השיחה, והתמלול המלא נשמר');
-  if (S.current && v(S.current, 'AO') === res.id) openLead(S.current.row, true);
-}
-async function retryRecFinish() {
-  if (!S.recUid || S.recBusy) return;
-  S.recBusy = true;
-  try { await finishRec(S.recUid, S.recRef); S.recUid = ''; }
-  catch (e) { recProg('&#x26A0; ' + esc(e.message || String(e)), -1, REC_RETRY_BTN); toast(e.message || String(e), true); }
-  finally { S.recBusy = false; }
+/** בודק כל 20 שניות אם העיבוד ברקע הסתיים (כל עוד הכרטיס של הליד פתוח) */
+async function pollRec(id, base) {
+  if (S.recPoll === id) return;
+  S.recPoll = id;
+  try {
+    for (let i = 0; i < 60; i++) {
+      await sleep(20000);
+      if (!S.current || v(S.current, 'AO') !== id) return;
+      let s; try { s = await call('recStatus', { ...base, id }); } catch (e) { continue; }
+      if (s.pending && s.pending.length) {
+        const p = s.pending[0], el = document.getElementById('recProg');
+        if (el && p.segs > 1) recProg('&#x23F3; מתמלל ברקע: קטע ' + Math.min(p.seg + 1, p.segs) + ' מתוך ' + p.segs + '. אפשר לסגור את האפליקציה.', -1);
+        continue;
+      }
+      (s.rows || []).forEach(patchRow);
+      S.data.transcripts = S.data.transcripts || {};
+      S.data.transcripts[id] = s.transcripts;
+      S.data.recStatus = S.data.recStatus || {};
+      S.data.recStatus[id] = s.last && !s.last.ok ? { error: s.last.msg } : {};
+      saveCache();
+      if (s.last && !s.last.ok) toast('עיבוד ההקלטה נכשל: ' + s.last.msg, true);
+      else toast('הסיכום נכנס לכרטיס, והתמלול המלא נשמר');
+      if (S.current && v(S.current, 'AO') === id && !isTyping()) openLead(S.current.row, true);
+      return;
+    }
+  } finally { if (S.recPoll === id) S.recPoll = ''; }
 }
 async function showTranscript(doc) {
   const box = document.getElementById('trBox'); if (!box) return;
