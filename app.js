@@ -142,7 +142,7 @@ function buildRows() {
     r.active = v(r, 'H') === 'פעיל';
     const k = v(r, 'K'), kd = parseDate(k);
     r.kTime = kd ? kd.getTime() : null;
-    r.due = k === 'מלאי' ? 'stock' : !kd ? (k ? 'other' : 'none') : r.kTime < t ? 'overdue' : r.kTime === t ? 'today' : 'future';
+    r.due = k === 'מלאי' ? 'stock' : !kd ? (k ? 'other' : 'none') : !r.active ? 'closed' : r.kTime < t ? 'overdue' : r.kTime === t ? 'today' : 'future';
     r.fresh = r.isLead && r.active && neverContacted(values[8]);
     r.fp = [values[0], values[4], values[6], values[9]].join('|');
     r.search = (values[0] + ' ' + values[1] + ' ' + values[3] + ' ' + values[4] + ' ' + values[5] + ' ' + values[8]).toLowerCase();
@@ -236,6 +236,7 @@ function dueBadge(r) {
   if (r.due === 'today') return '<span class="badge orange">היום</span>';
   if (r.due === 'stock') return '<span class="badge gray">מלאי</span>';
   if (r.due === 'future') return `<span class="badge">${esc(v(r, 'K'))}</span>`;
+  if (r.due === 'closed') return `<span class="badge gray">חזרה: ${esc(v(r, 'K'))}</span>`;
   if (r.isLead && r.active) return '<span class="badge gray">אין תאריך חזרה</span>';
   return '';
 }
