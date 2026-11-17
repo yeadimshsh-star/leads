@@ -60,6 +60,7 @@ function setWho(updating) {
 }
 /** האם המשתמש באמצע הקלדה או עריכה – אז לא מרעננים כדי לא למחוק לו את מה שכתב. */
 function isTyping() {
+  if (S.recBusy) return true; // באמצע העלאת הקלטה – לא מרעננים את המסך
   const a = document.activeElement;
   if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
   return [...document.querySelectorAll('#panel textarea, #panel input, #main textarea, #main input:not([type=search])')]
@@ -754,6 +755,8 @@ function leadPanel(r) {
     <div class="row" style="margin-top:6px"><button class="btn" onclick="addNote()">הוסף הערה</button></div>
   </div>
 
+  ${recCard(r)}
+
   <div class="card">
     <label>תאריך חזרה${v(r, 'K') ? ' (כרגע: ' + esc(v(r, 'K')) + ')' : ''}</label>
     <div class="row">${quick.map(([t, d]) => `<button class="btn light" onclick="pickNext('${iso(addDays(today0(), d))}')">${t}</button>`).join('')}
@@ -785,6 +788,125 @@ function leadPanel(r) {
   <div class="card"><details><summary>&#x270F; כל השדות</summary>${fieldsForm(r)}</details></div>
 
   <div class="row" style="justify-content:center;margin:14px 0 4px"><button class="btn ghost danger" onclick="deleteRow()">&#x1F5D1; מחק שורה</button></div>`;
+}
+/* ---------- הקלטת שיחה: העלאה → תמלול מלא (Doc) → סיכום קצר בעמודה I ---------- */
+const REC_MAX_MB = 100;
+function recCard(r) {
+  const list = ((S.data.transcripts || {})[v(r, 'AO')] || []).slice().reverse();
+  return `<div class="card" id="recCard"><label>&#x1F399; הקלטת שיחה</label>
+    <div class="muted" style="margin-bottom:6px">בוחרים את קובץ ההקלטה מהטלפון. ההקלטה עוברת תמלול ונמחקת. התמלול המלא נשמר, וסיכום קצר נכנס לסיכום השיחה.</div>
+    <input type="file" id="recFile" accept="audio/*,.m4a,.amr,.3gp,.opus,.aac,.mp3,.ogg,.wav,.flac" style="display:none" onchange="uploadRec(this)">
+    <div class="row"><button class="btn" id="recBtn" onclick="document.getElementById('recFile').click()" ${v(r, 'AO') ? '' : 'disabled'}>&#x1F399; העלאת הקלטה</button></div>
+    <div id="recProg"></div>
+    ${list.length ? `<label style="margin-top:10px">תמלולים</label><div class="row">${list.map(t => `<button class="btn light" onclick="showTranscript('${esc(t.doc)}')">&#x1F4C4; תמלול מלא · ${esc(t.date)}${t.by ? ' · ' + esc(t.by) : ''}${t.dur ? ' · ' + Math.max(1, Math.round(t.dur / 60)) + ' דק&#x27;' : ''}</button>`).join('')}</div>` : ''}
+    <div id="trBox"></div></div>`;
+}
+function recProg(text, pct, extra) {
+  const el = document.getElementById('recProg'); if (!el) return;
+  el.innerHTML = `<div style="margin-top:8px"><div class="muted">${text}</div>` +
+    (pct >= 0 ? `<div style="height:8px;background:#E6ECF5;border-radius:4px;margin-top:4px;overflow:hidden"><div style="height:100%;width:${Math.round(pct)}%;background:linear-gradient(90deg,#003DB8,#14CCAB)"></div></div>` : '') +
+    (extra || '') + '</div>';
+}
+function audioDuration(file) {
+  return new Promise(ok => {
+    const url = URL.createObjectURL(file), a = new Audio();
+    const done = d => { URL.revokeObjectURL(url); ok(isFinite(d) && d > 0 ? d : 0); };
+    const t = setTimeout(() => done(0), 8000);
+    a.preload = 'metadata';
+    a.onloadedmetadata = () => { clearTimeout(t); done(a.duration); };
+    a.onerror = () => { clearTimeout(t); done(0); };
+    a.src = url;
+  });
+}
+function blobB64(blob) {
+  return new Promise((ok, fail) => {
+    const fr = new FileReader();
+    fr.onload = () => ok(String(fr.result).split(',')[1] || '');
+    fr.onerror = () => fail(new Error('קריאת הקובץ נכשלה'));
+    fr.readAsDataURL(blob);
+  });
+}
+const REC_RETRY_BTN = '<div class="row" style="margin-top:6px"><button class="btn" onclick="retryRecFinish()">נסה שוב את הסיכום</button></div>';
+async function uploadRec(input) {
+  const f = input.files && input.files[0]; input.value = '';
+  if (!f || S.recBusy) return;
+  const m = f.name.match(/\.([a-z0-9]+)$/i), ext = m ? m[1].toLowerCase() : '';
+  const mb = f.size / 1048576;
+  if (mb > REC_MAX_MB) return toast('ההקלטה גדולה מדי (' + Math.round(mb) + 'MB). המקסימום ' + REC_MAX_MB + 'MB.', true);
+  const r = S.current, base = ref();
+  const dur = await audioDuration(f);
+  const len = dur ? ', ' + Math.max(1, Math.round(dur / 60)) + ' דקות' : '';
+  if (!confirm('להעלות את "' + f.name + '" (' + mb.toFixed(1) + 'MB' + len + ') לתמלול ולסיכום של ' + v(r, 'A') + '?\n\nההקלטה עצמה לא נשמרת.')) return;
+  S.recBusy = true;
+  const btn = document.getElementById('recBtn'); if (btn) btn.disabled = true;
+  window.onbeforeunload = () => 'ההעלאה עוד לא הסתיימה';
+  let uid = '', stage = 'upload';
+  try {
+    recProg('מתחיל העלאה…', 0);
+    const st = await call('recStart', { ...base, size: f.size, ext, dur });
+    uid = st.uid;
+    for (let off = 0; off < f.size; off += st.chunk) {
+      const data = await blobB64(f.slice(off, off + st.chunk));
+      await call('recChunk', { uid, off, data });
+      const pct = Math.min(100, (off + st.chunk) / f.size * 100);
+      recProg('מעלה… ' + Math.round(pct) + '%', pct * 0.4);
+    }
+    stage = 'transcribe';
+    let seg = 0, segs = 1, tries = 0;
+    while (true) {
+      recProg(segs > 1 ? 'מתמלל קטע ' + (seg + 1) + ' מתוך ' + segs + '…' : 'מתמלל… (כדקה-שתיים, לא לסגור את המסך)', 40 + seg / segs * 45);
+      const res = await call('recTranscribe', { uid, seg });
+      if (res.wait) { if (++tries > 8) throw new Error('Gemini עדיין מעבד את הקובץ. נסה שוב בעוד כמה דקות.'); continue; }
+      segs = res.segs;
+      if (res.done) break;
+      seg++;
+    }
+    stage = 'finish';
+    await finishRec(uid, base);
+  } catch (e) {
+    const msg = e.message || String(e);
+    if (stage === 'finish' && uid) {
+      S.recUid = uid; S.recRef = base;
+      recProg('&#x26A0; התמלול נשמר, אבל הסיכום נכשל: ' + esc(msg), -1, REC_RETRY_BTN);
+    } else {
+      recProg('&#x26A0; ' + esc(msg), -1);
+      if (uid) call('recCancel', { uid }).catch(() => { });
+    }
+    toast(msg, true);
+  } finally {
+    S.recBusy = false; window.onbeforeunload = null;
+    const b = document.getElementById('recBtn'); if (b) b.disabled = false;
+  }
+}
+async function finishRec(uid, base) {
+  recProg('מסכם ומוחק את ההקלטה…', 90);
+  const res = await call('recFinish', { ...base, uid });
+  (res.rows || []).forEach(patchRow);
+  if (!S.data.transcripts) S.data.transcripts = {};
+  S.data.transcripts[res.id] = res.transcripts;
+  saveCache();
+  S.recBusy = false;
+  toast('הסיכום נוסף לסיכום השיחה, והתמלול המלא נשמר');
+  if (S.current && v(S.current, 'AO') === res.id) openLead(S.current.row, true);
+}
+async function retryRecFinish() {
+  if (!S.recUid || S.recBusy) return;
+  S.recBusy = true;
+  try { await finishRec(S.recUid, S.recRef); S.recUid = ''; }
+  catch (e) { recProg('&#x26A0; ' + esc(e.message || String(e)), -1, REC_RETRY_BTN); toast(e.message || String(e), true); }
+  finally { S.recBusy = false; }
+}
+async function showTranscript(doc) {
+  const box = document.getElementById('trBox'); if (!box) return;
+  if (box.dataset.doc === doc && box.innerHTML) { box.innerHTML = ''; box.dataset.doc = ''; return; }
+  box.dataset.doc = doc;
+  box.innerHTML = '<div class="muted" style="margin-top:8px">טוען תמלול…</div>';
+  try {
+    const t = await call('transcript', { doc });
+    box.innerHTML = `<div class="row" style="justify-content:space-between;margin-top:10px"><b>${esc(t.title)}</b>
+      ${S.data.me === 'שמואל' ? `<a class="btn ghost" style="padding:4px 10px" href="${esc(t.url)}" target="_blank">פתח ב-Google Docs</a>` : ''}</div>
+      <div class="notes" style="max-height:420px;margin-top:6px">${esc(t.text)}</div>`;
+  } catch (e) { box.innerHTML = ''; toast(e.message || String(e), true); }
 }
 function stampNow() { const t = new Date(); return String(t.getDate()).padStart(2, '0') + '.' + String(t.getMonth() + 1).padStart(2, '0') + '.' + String(t.getFullYear()).slice(2); }
 const ref = () => ({ row: S.current.row, fp: S.current.fp, id: v(S.current, 'AO') });
