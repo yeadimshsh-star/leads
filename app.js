@@ -742,7 +742,7 @@ function leadPanel(r) {
     <div class="row" style="margin-top:10px">
       ${phone ? `<a class="btn light" href="tel:${esc(phone)}" onclick="return dial(this)">${ICON.phone} ${esc(phone)}</a>
         <a class="btn light" style="color:#128C7E" href="https://wa.me/${waPhone(phone)}" target="_blank">${ICON.wa} וואטסאפ</a>
-        <button class="btn teal" onclick="pickTemplate()">${ICON.wa} שלח טקסט מוכן</button>` : '<span class="muted">אין טלפון</span>'}
+        <button class="btn teal" onclick="pickTemplate()">${ICON.wa} &#x2709; שלח טקסט מוכן</button>` : clientEmail(r) ? `<span class="muted">אין טלפון</span> <button class="btn teal" onclick="pickTemplate()">&#x2709; שלח טקסט מוכן במייל</button>` : '<span class="muted">אין טלפון</span>'}
       ${phone2 ? `<a class="btn ghost" href="tel:${esc(phone2)}" onclick="return dial(this)">${ICON.phone} ${esc(phone2)}</a>` : ''}
       ${email ? `<a class="btn ghost" href="mailto:${esc(email)}" target="_blank">&#x2709; ${esc(email)}</a>` : ''}
     </div>
@@ -982,12 +982,24 @@ async function pickTemplate() {
   box.innerHTML = '<div class="muted" style="margin-top:8px">טוען טקסטים מהמסמך…</div>';
   try {
     const tpls = await call('templates');
-    box.innerHTML = '<label>בחר טקסט לשליחה:</label>' + tpls.map((t, i) => `<button class="btn ghost tpl" data-i="${i}">${esc(t.title)}</button>`).join('');
-    box.querySelectorAll('.tpl').forEach(b => b.onclick = () => {
-      const t = tpls[+b.dataset.i];
-      waSend(v(S.current, 'E'), t.text);
-    });
+    const phone = v(S.current, 'E'), email = clientEmail(S.current);
+    box.innerHTML = '<label>בחר טקסט ולאן לשלוח:</label>' + tpls.map((t, i) => `<div class="row" style="margin-top:6px;align-items:center">
+      <span style="flex:1;min-width:140px;font-weight:600">${esc(t.title)}</span>
+      ${phone ? `<button class="btn light tplWa" data-i="${i}" style="color:#128C7E">${ICON.wa} וואטסאפ</button>` : ''}
+      ${email ? `<button class="btn light tplMail" data-i="${i}">&#x2709; מייל</button>` : ''}</div>`).join('') +
+      (email ? '' : '<div class="muted" style="margin-top:6px">ללקוח אין מייל בגליון (עמודה D), ולכן אפשר לשלוח רק בוואטסאפ.</div>');
+    box.querySelectorAll('.tplWa').forEach(b => b.onclick = () => waSend(phone, tpls[+b.dataset.i].text));
+    box.querySelectorAll('.tplMail').forEach(b => b.onclick = () => { const t = tpls[+b.dataset.i]; mailSend(email, 'יעדים – ' + t.title, t.text); });
   } catch (e) { box.innerHTML = ''; toast(e.message || String(e), true); }
+}
+
+/** מייל הלקוח מעמודה D – רק אם זו כתובת אמיתית (יש בה @) */
+function clientEmail(r) { const e = String(v(r, 'D') || '').trim(); return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) ? e : ''; }
+/** שליחה במייל: פותח את אפליקציית המייל עם הנמען, הנושא והטקסט מוכנים. כוכביות של הדגשה בוואטסאפ יורדות. */
+function mailSend(email, subject, text) {
+  const body = String(text || '').replace(/\*([^*\n]+)\*/g, '$1');
+  const url = 'mailto:' + email + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+  if (window.PWA) location.href = url; else window.open(url, '_blank');
 }
 
 /** שליחת טקסט בוואטסאפ. api.whatsapp.com ולא wa.me – ההפניה של wa.me משבשת אימוג'י בחלק מהמכשירים. */
@@ -1004,13 +1016,26 @@ function bookingCard(r) {
       <button class="btn light" id="bm_zoom" onclick="setBookMode('zoom')">זום</button>
       <button class="btn light" id="bm_front" onclick="setBookMode('front')">פרונטלי</button>
       <button class="btn" onclick="loadSlots()">הצג מועדים פנויים</button></div>
-    ${v(r, 'E') ? `<div class="row" style="margin-top:8px"><button class="btn teal" onclick="sendMeetText()">${ICON.wa} שלח ללקוח בוואטסאפ: שאלון ותשלום (ומועד אם נקבע)</button></div>` : ''}
+    ${v(r, 'E') || clientEmail(r) ? `<div class="row" style="margin-top:8px">
+      ${v(r, 'E') ? `<button class="btn teal" onclick="sendMeetText()">${ICON.wa} שלח ללקוח בוואטסאפ: שאלון ותשלום (ומועד אם נקבע)</button>` : ''}
+      ${clientEmail(r) ? `<button class="btn light" onclick="sendMeetText('mail')">&#x2709; שלח במייל</button>` : ''}</div>` : ''}
     <div id="slots"></div></div>`;
 }
 /** ההודעה ללקוח: אם נקבעה פגישה – מועד, יומן, שאלון ותשלום; אם עוד לא – שאלון ותשלום, והמועד בהמשך */
 // נפתח חלון מיד בלחיצה (אחרת הדפדפן בטלפון חוסם), ואז מכוונים אותו לוואטסאפ כשהטקסט מגיע מהשרת
-async function sendMeetText() {
+async function sendMeetText(via) {
   const phone = v(S.current, 'E');
+  if (via === 'mail') {
+    // מייל: קודם מביאים את הטקסט, ואז לחיצה על "פתח מייל" (פתיחת אפליקציית מייל חייבת לחיצה ישירה)
+    busy(true);
+    try {
+      const res = await call('meetText', ref());
+      S.lastMail = res.text;
+      const box = document.getElementById('slots');
+      if (box) box.innerHTML = `<div class="row" style="margin-top:8px"><button class="btn" onclick="mailSend('${esc(clientEmail(S.current))}', 'פגישת פיצוח אסטרטגית – יעדים', S.lastMail)">&#x2709; פתח מייל ל-${esc(clientEmail(S.current))}</button></div>`;
+    } catch (e) { toast(e.message || String(e), true); } finally { busy(false); }
+    return;
+  }
   const w = window.open('about:blank', '_blank');
   busy(true);
   try {
@@ -1033,7 +1058,7 @@ async function loadSlots() {
     if (res.booked) {
       const b = res.booked;
       html += `<div class="notes" style="margin-top:8px">&#x2705; כבר נקבעה פגישה: יום ${b.day} ${ddmm(b.date)} בשעה ${b.time} (${b.mode === 'zoom' ? 'זום' : 'פרונטלי'}).<br>בחירת מועד אחר תעדכן את אותו זימון.</div>`;
-      if (res.wa && v(S.current, 'E')) { S.lastWa = res.wa; html += `<div class="row" style="margin-top:8px"><button class="btn teal" onclick="waSend('${esc(v(S.current, 'E'))}', S.lastWa)">${ICON.wa} שלח ללקוח בוואטסאפ: מועד, שאלון ותשלום</button></div>`; }
+      if (res.wa) { S.lastWa = res.wa; html += waMailRow(v(S.current, 'E'), clientEmail(S.current)); }
       if (!S.bookMode) setBookMode(b.mode);
     }
     if (!res.windows.length) html += '<div class="muted" style="margin-top:8px">אין כרגע מועדים פנויים. אפרים פותח מועדים ביומן שלו (אירוע בשם "פגישה פנויה") – בקש ממנו לפתוח מועד, ואז לחץ שוב על "הצג מועדים פנויים".</div>';
@@ -1058,7 +1083,14 @@ async function pickSlot(date, time) {
   S.lastWa = res.wa;
   box.innerHTML = `<div class="notes" style="margin-top:8px">&#x2705; ${again ? 'המועד עודכן' : 'הפגישה נקבעה'}: ${ddmm(date)} בשעה ${time} (${m === 'zoom' ? 'זום' : 'פרונטלי'}). התאריך נכתב בעמודה L.</div>
     ${res.noEmail ? '<div class="muted" style="margin-top:6px;color:#b00">ללקוח אין מייל בגליון, ולכן הזימון לא נשלח אליו. שלח לו את הפרטים בוואטסאפ.</div>' : ''}
-    ${phone ? `<div class="row" style="margin-top:8px"><button class="btn teal" onclick="waSend('${esc(phone)}', S.lastWa)">${ICON.wa} שלח ללקוח בוואטסאפ: מועד, שאלון ותשלום</button></div>` : ''}`;
+    ${waMailRow(phone, clientEmail(r))}`;
+}
+/** כפתורי שליחת פרטי הפגישה (S.lastWa) ללקוח: וואטסאפ ו/או מייל */
+function waMailRow(phone, email) {
+  if (!phone && !email) return '';
+  return `<div class="row" style="margin-top:8px">
+    ${phone ? `<button class="btn teal" onclick="waSend('${esc(phone)}', S.lastWa)">${ICON.wa} שלח ללקוח בוואטסאפ: מועד, שאלון ותשלום</button>` : ''}
+    ${email ? `<button class="btn light" onclick="mailSend('${esc(email)}', 'פגישת פיצוח אסטרטגית – יעדים', S.lastWa)">&#x2709; שלח במייל</button>` : ''}</div>`;
 }
 
 /* ---------- מכירה ---------- */
