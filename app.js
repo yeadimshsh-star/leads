@@ -3,7 +3,9 @@ const S = {
   data: null, view: 'today', limit: 100, templates: null, current: null,
   f: { who: 'me', stage: 'leads', status: 'פעיל', due: '', q: '' }
 };
-const COLS = []; for (let i = 0; i < 41; i++) COLS.push(colLetter(i));
+// מפתחות פנימיים A..AQ (לא האות שבגליון): השרת מוצא כל עמודה לפי שם הכותרת ושולח את השורה בסדר הזה (18.11.26)
+const NCOLS = 43;
+const COLS = []; for (let i = 0; i < NCOLS; i++) COLS.push(colLetter(i));
 function colLetter(i) { let s = ''; i += 1; while (i) { const m = (i - 1) % 26; s = String.fromCharCode(65 + m) + s; i = Math.floor((i - 1) / 26); } return s; }
 const ci = l => COLS.indexOf(l);
 const v = (r, l) => (r.values[ci(l)] || '').trim();
@@ -44,7 +46,7 @@ async function writeCall(action, args, okMsg) {
 }
 function patchRow(p) {
   const i = p.row - S.data.firstRow;
-  while (S.data.rows.length <= i) S.data.rows.push(new Array(41).fill(''));
+  while (S.data.rows.length <= i) S.data.rows.push(new Array(NCOLS).fill(''));
   S.data.rows[i] = p.values;
   buildRows();
   saveCache();
@@ -791,6 +793,7 @@ function leadPanel(r) {
   <div class="card">
     <label>מצב</label>
     <div class="row">${(r.isLead ? S.data.statuses : ['פעיל', 'סיום']).map(s => `<button class="btn ${s === H ? 'on' : 'light'}" onclick="setStatus('${s}')">${s === 'סיום' && !r.isLead ? 'סיום ליווי' : s}</button>`).join('')}</div>
+    ${H === 'סיום' && v(r, 'AQ') ? `<div class="muted" style="margin-top:6px">סיבת סיום: <b>${esc(v(r, 'AQ'))}</b></div>` : ''}
     ${r.isLead ? `<label>העברה לטיפול</label>
     <div class="row">${S.data.handlers.map(h => `<button class="btn ${h === C ? 'on' : 'light'}" ${h === C ? 'disabled' : ''} onclick="transfer('${h}')">${h}</button>`).join('')}</div>`
     : `<label>החלפת יועץ</label>
@@ -799,6 +802,10 @@ function leadPanel(r) {
   </div>
 
   ${!r.isLead && v(r, 'G') === 'רכש פגישה' && H === 'פעיל' ? bookingCard(r) : ''}
+
+  ${!r.isLead && /^רכש (פגישה|ליווי)/.test(v(r, 'G')) ? `<div class="card"><label>&#x1F4C1; תיקיית הלקוח</label>
+    <div class="muted" style="margin-bottom:6px">מעדכן את מסמך "סיכומי פגישות": שם, מייל, טלפון, סיכום איש המכירות והשאלון (אם מולא). רק מה שחסר נוסף. מתעדכן לבד גם במכירה ובקביעת פגישה.</div>
+    <div class="row"><button class="btn light" onclick="updateClientDoc()">&#x1F4C1; עדכון תיקיית הלקוח</button></div><div id="docRes"></div></div>` : ''}
 
   ${r.isLead ? `<div class="card"><details id="saleBox"><summary>&#x1F4B0; נסגרה מכירה - פתיחת שורת רכש</summary>${saleForm(r)}</details></div>` : ''}
 
@@ -949,6 +956,19 @@ async function showTranscript(doc) {
       <div class="notes" style="max-height:420px;margin-top:6px">${esc(t.text)}</div>`;
   } catch (e) { box.innerHTML = ''; toast(e.message || String(e), true); }
 }
+/** עדכון מסמך "סיכומי פגישות" בתיקיית הלקוח */
+async function updateClientDoc() {
+  const box = document.getElementById('docRes');
+  busy(true);
+  try {
+    const res = await call('clientDoc', ref());
+    const parts = [];
+    parts.push(res.added ? 'נוספו ' + res.added + ' שורות לסיכום איש המכירות' : 'סיכום איש המכירות כבר מעודכן');
+    if (res.form) parts.push('השאלון נוסף');
+    if (box) box.innerHTML = `<div class="notes" style="margin-top:8px">&#x2705; ${parts.join('. ')}. <a href="${esc(res.url)}" target="_blank">פתח את המסמך</a></div>`;
+    toast('מסמך הסיכומים עודכן');
+  } catch (e) { toast(e.message || String(e), true); } finally { busy(false); }
+}
 function stampNow() { const t = new Date(); return String(t.getDate()).padStart(2, '0') + '.' + String(t.getMonth() + 1).padStart(2, '0') + '.' + String(t.getFullYear()).slice(2); }
 const ref = () => ({ row: S.current.row, fp: S.current.fp, id: v(S.current, 'AO') });
 async function deleteRow() {
@@ -1003,13 +1023,39 @@ async function setNext(value) {
   openLead(S.current.row, true);
 }
 async function setStatus(status) {
-  if (status === 'סיום' && !S.current.isLead && !confirm('לסיים את ' + v(S.current, 'G') + ' של ' + v(S.current, 'A') + '?\nתאריך הסיום יהיה היום.')) return;
   if (status === 'נמכר' && S.current.isLead) {
     const box = document.getElementById('saleBox');
     if (box && !confirm('לסמן "נמכר" בלי לפתוח שורת רכש?\nלחץ "ביטול" כדי למלא את פרטי הרכישה.')) { box.open = true; box.scrollIntoView({ behavior: 'smooth' }); return; }
   }
-  await writeCall('setStatus', { ...ref(), status }, 'המצב עודכן');
+  let reason = '';
+  if (status === 'סיום') {
+    reason = await askEndReason(S.current);
+    if (!reason) return;
+  }
+  await writeCall('setStatus', { ...ref(), status, reason }, 'המצב עודכן');
   openLead(S.current.row, true);
+}
+
+/** חלון סיבת סיום (חובה): ליד – בחירה מהרשימה; לקוח (שורת רכש) – טקסט חופשי. מחזיר '' אם בוטל. */
+function askEndReason(r) {
+  return new Promise(resolve => {
+    const lead = r.isLead, opts = (S.data.lists.AQ || []);
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    wrap.innerHTML = `<div class="card" style="max-width:420px;width:100%;margin:0">
+      <h3 style="margin-top:0">${lead ? 'למה הליד נסגר?' : 'מה גרם ללקוח לסיים?'}</h3>
+      <div class="muted" style="margin-bottom:8px">${esc(v(r, 'A'))} · ${esc(v(r, 'G'))}${lead ? '' : '<br>תאריך הסיום יהיה היום.'}</div>
+      ${lead ? opts.map(o => `<button class="btn light erOpt" style="display:block;width:100%;margin:6px 0;text-align:right">${esc(o)}</button>`).join('')
+        : '<textarea id="erText" style="width:100%;min-height:90px" placeholder="כתוב בקצרה מה גרם לו לסיים"></textarea><div class="row" style="margin-top:8px"><button class="btn" id="erOk">סיום ליווי</button></div>'}
+      <div class="row" style="margin-top:8px"><button class="btn light" id="erCancel">ביטול</button></div></div>`;
+    const done = val => { wrap.remove(); resolve(val); };
+    wrap.querySelectorAll('.erOpt').forEach(b => b.onclick = () => done(b.textContent.trim()));
+    wrap.querySelector('#erCancel').onclick = () => done('');
+    const ok = wrap.querySelector('#erOk');
+    if (ok) ok.onclick = () => { const t = wrap.querySelector('#erText').value.trim(); if (!t) return toast('חובה לכתוב סיבה', true); done(t); };
+    document.body.appendChild(wrap);
+    const ta = wrap.querySelector('#erText'); if (ta) ta.focus();
+  });
 }
 async function transfer(to) {
   if (!confirm((S.current.isLead ? 'להעביר את ' + v(S.current, 'A') + ' לטיפול ' : 'להחליף את היועץ של ' + v(S.current, 'A') + ' ל') + to + '?')) return;
@@ -1176,10 +1222,11 @@ function fieldsForm(r) {
       group = hd[0][i].trim();
       html += `</div><h3>${esc(group)}</h3><div class="grid2">`;
     }
-    const label = `${esc((hd[1][i] || '').trim())} <span class="muted">(${c})</span>`;
+    const label = esc((hd[1][i] || '').trim());
     const cur = r.values[i] || '';
     let input;
     if (c === 'AM' || c === 'AO') input = `<input value="${esc(cur)}" disabled>`;
+    else if (c === 'AQ' && !r.isLead) input = `<textarea data-c="AQ" data-old="${esc(cur)}" placeholder="מה גרם ללקוח לסיים?">${esc(cur)}</textarea>`;
     else if (['J', 'K', 'L'].includes(c)) {
       input = cur === 'מלאי' || (cur && !parseDate(cur)) ? `<input data-c="${c}" data-old="${esc(cur)}" value="${esc(cur)}" placeholder="yyyy-mm-dd או מלאי">`
         : `<input type="date" data-c="${c}" data-old="${esc(cur)}" data-date="1" value="${toIso(cur)}">`;
