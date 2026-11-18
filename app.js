@@ -83,6 +83,7 @@ async function reload(quiet) {
       if (S.currentId || S.current) reopenCurrent();
     }
     showSales();
+    showMeetings();
     loadHours();
   } catch (e) {
     const msg = e.message || String(e);
@@ -321,6 +322,7 @@ function viewToday() {
       <div class="stat" onclick="S.f.who='me';S.f.stage='leads';S.f.status='פעיל';S.f.due='';S.f.q='';go('all')"><b>${mine.length}</b><span>לידים פתוחים שלי</span></div>
       <div class="stat" onclick="S.f.who='me';S.f.stage='leads';S.f.status='פעיל';S.f.due='stock';S.f.q='';go('all')"><b>${stock}</b><span>מלאי</span></div>
     </div>
+    ${meetBanner()}
     <div class="muted" style="margin:-2px 2px 8px">לסידור ידני: לחיצה ארוכה על ליד וגרירה. הסדר נשמר לך בלבד.</div>
     <h3 id="sec-today">להיום (${tod.length})</h3>${sortList(tod)}
     <h3 id="sec-over">באיחור (${over.length})</h3>${sortList(over)}
@@ -1249,7 +1251,7 @@ async function saveFields() {
     if (!same) changes[el.dataset.c] = { old, value: val };
   });
   if (!Object.keys(changes).length) return toast('לא שונה אף שדה');
-  await writeCall('update', { ...ref(), changes }, 'השינויים נשמרו');
+  await writeCall('update', { ...ref(), changes, strictReason: true }, 'השינויים נשמרו');
   openLead(S.current.row, true);
 }
 
@@ -1306,6 +1308,107 @@ async function newLead(force) {
 }
 
 /* ---------- כללי ---------- */
+/* ---------- אחרי פגישה: חלון "פגישות שממתינות לעדכון" (אפרים ושמואל, 18.11.26) ---------- */
+const pendMeets = () => (S.data && S.data.meetings) || [];
+function meetBanner() {
+  const n = pendMeets().length;
+  if (!n) return '';
+  return `<div class="card" style="border:2px solid #c62828;cursor:pointer;margin-bottom:10px" onclick="S.meetLater=false;showMeetings(true)">
+    <b style="color:#c62828">&#x1F4CB; ${n === 1 ? 'פגישה אחת ממתינה' : n + ' פגישות ממתינות'} לעדכון</b>
+    <div class="muted">${pendMeets().map(m => esc(m.name)).join(' · ')} – לחץ כדי לעדכן</div></div>`;
+}
+function showMeetings(force) {
+  if (!pendMeets().length || (S.meetLater && !force) || document.getElementById('meetBox')) return;
+  S.meetIdx = 0; S.meetStep = 'held';
+  const wrap = document.createElement('div');
+  wrap.id = 'meetBox';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,30,90,.45);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px;overflow:auto';
+  document.body.appendChild(wrap);
+  meetRender();
+}
+function meetClose(later) { const w = document.getElementById('meetBox'); if (w) w.remove(); if (later) S.meetLater = true; render(); }
+function meetCur() { const l = pendMeets(); if (S.meetIdx >= l.length) S.meetIdx = 0; return l[S.meetIdx]; }
+function meetRender() {
+  const w = document.getElementById('meetBox'), m = meetCur();
+  if (!w) return;
+  if (!m) return meetClose();
+  const l = pendMeets(), big = 'display:block;width:100%;margin:6px 0;text-align:right';
+  let body = '';
+  if (S.meetStep === 'held') body = `<h3 style="margin:6px 0">הפגישה התקיימה?</h3>
+      <button class="btn teal" style="${big}" onclick="S.meetStep='doc';meetRender()">&#x2713; כן, הפגישה התקיימה</button>
+      <button class="btn light" style="${big}" onclick="meetResched()">&#x1F4C5; נדחתה – לקבוע מועד חדש</button>
+      <button class="btn light" style="${big}" onclick="S.meetStep='noshow';meetRender()">&#x2717; לא התקיימה</button>`;
+  else if (S.meetStep === 'doc') body = `<h3 style="margin:6px 0">מילאת את סיכום הפגישה במסמך "סיכומי פגישות" של הלקוח?</h3>
+      <button class="btn light" style="${big}" onclick="meetOpenDoc()">&#x1F4C4; פתח את מסמך הסיכומים</button>
+      <button class="btn teal" style="${big}" onclick="S.meetStep='follow';S.meetG='ליד ליווי מקיף';S.meetC='';meetRender()">&#x2713; כן, הסיכום במסמך</button>`;
+  else if (S.meetStep === 'follow') {
+    const q = [['שבוע', 7], ['שבועיים', 14], ['חודש', 30]];
+    body = `<h3 style="margin:6px 0">לפתוח ליד ליווי?</h3>
+      <div class="row"><span class="muted">סוג:</span>
+        ${['ליד ליווי מקיף', 'ליד ליווי בסיסי'].map(g => `<button class="btn light${S.meetG === g ? ' on' : ''}" onclick="S.meetG='${g}';meetRender()">${g.replace('ליד ', '')}</button>`).join('')}</div>
+      <div class="row" style="margin-top:6px"><span class="muted">אצל:</span>
+        ${['אפרים', 'נריה'].map(c => `<button class="btn light${S.meetC === c ? ' on' : ''}" onclick="S.meetC='${c}';meetRender()">${c}</button>`).join('')}</div>
+      <div class="row" style="margin-top:6px"><span class="muted">תאריך חזרה:</span>
+        ${q.map(([t, d]) => `<button class="btn light" onclick="document.getElementById('meetK').value='${iso(addDays(today0(), d))}';showMeetDay()">${t}</button>`).join('')}
+        <input type="date" id="meetK" value="${S.meetK || iso(addDays(today0(), 7))}" oninput="showMeetDay()" onchange="showMeetDay()"><span id="meetKDay" class="muted"></span></div>
+      <button class="btn teal" style="${big};margin-top:10px" onclick="meetSave('follow')">&#x2713; אישור – לפתוח ${esc(S.meetG)}${S.meetC ? ' אצל ' + esc(S.meetC) : ''} ולסגור את הפגישה</button>
+      <button class="btn light" style="${big}" onclick="meetSave('none')">לא לפתוח ליד ליווי – רק לסגור את הפגישה</button>`;
+  } else if (S.meetStep === 'noshow') body = `<h3 style="margin:6px 0">הפגישה לא התקיימה</h3>
+      <div class="muted">שורת "רכש פגישה" תעבור ל"סיום" (סיבה: הפגישה לא התקיימה). אם רוצים לנסות לקבוע שוב – עדיף "נדחתה".</div>
+      <textarea id="meetNote" style="width:100%;min-height:60px;margin-top:6px" placeholder="הערה (לא חובה): למה לא התקיימה"></textarea>
+      <button class="btn" style="${big}" onclick="meetSave('noshow')">&#x2713; אישור – לסגור</button>`;
+  w.innerHTML = `<div class="card" style="max-width:440px;width:100%;margin:auto">
+    <div class="muted">${l.length > 1 ? `פגישה ${S.meetIdx + 1} מתוך ${l.length} שממתינות לעדכון` : 'פגישה שממתינה לעדכון'}</div>
+    <h2 style="margin:4px 0">${esc(m.name)}</h2><div class="muted">${esc(m.label)}</div>
+    ${body}
+    <div class="row" style="margin-top:10px">
+      ${S.meetStep !== 'held' ? `<button class="btn ghost" onclick="S.meetStep='held';meetRender()">&#x2192; חזרה</button>` : ''}
+      ${l.length > 1 ? `<button class="btn ghost" onclick="S.meetIdx=(S.meetIdx+1)%${l.length};S.meetStep='held';meetRender()">לפגישה הבאה</button>` : ''}
+      <button class="btn ghost" onclick="meetClose(true)">אחר כך</button></div></div>`;
+  showMeetDay();
+}
+function showMeetDay() {
+  const el = document.getElementById('meetK'), out = document.getElementById('meetKDay');
+  if (!el || !out) return;
+  S.meetK = el.value;
+  const d = dayName(el.value), wk = /שישי|שבת/.test(d);
+  out.textContent = d; out.style.color = wk ? '#c62828' : ''; out.style.fontWeight = wk ? '700' : '';
+}
+function meetRow(m) { return S.rows.find(x => v(x, 'AO') === m.id) || rowByNum(m.row); }
+function meetRef(m) { const r = meetRow(m); return { row: r ? r.row : m.row, fp: r ? r.fp : '', id: m.id }; }
+function meetResched() {
+  const r = meetRow(meetCur());
+  meetClose(true);
+  if (r) { openLead(r.row); toast('קבע מועד חדש בכרטיס: "קביעת פגישה עם אפרים"'); }
+}
+async function meetOpenDoc() {
+  const m = meetCur(), win = window.open('', '_blank');
+  try {
+    busy(true);
+    const res = await call('meetDoc', meetRef(m));
+    if (win) win.location = res.url; else location.href = res.url;
+  } catch (e) { if (win) win.close(); toast(e.message || String(e), true); } finally { busy(false); }
+}
+async function meetSave(kind) {
+  const m = meetCur(), a = meetRef(m);
+  if (kind === 'noshow') { a.outcome = 'noshow'; a.note = (document.getElementById('meetNote') || {}).value || ''; }
+  else {
+    a.outcome = 'held';
+    if (kind === 'follow') {
+      const k = (document.getElementById('meetK') || {}).value;
+      if (!S.meetC) return toast('בחר אצל מי ליד הליווי: אפרים או נריה', true);
+      if (!k) return toast('בחר תאריך חזרה', true);
+      a.follow = { G: S.meetG, C: S.meetC, K: k };
+    }
+  }
+  try {
+    await writeCall('meetDone', a, kind === 'follow' ? `נפתח ${S.meetG} אצל ${S.meetC}, והפגישה נסגרה` : 'הפגישה נסגרה');
+    S.data.meetings = pendMeets().filter(x => x.id !== m.id);
+    saveCache();
+    S.meetStep = 'held'; S.meetK = '';
+    if (pendMeets().length) meetRender(); else meetClose();
+  } catch (e) { /* ההודעה כבר הוצגה */ }
+}
 function toast(msg, err) {
   const t = document.getElementById('toast');
   t.textContent = msg; t.className = err ? 'err' : ''; t.style.display = 'block';
