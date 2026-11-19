@@ -1477,18 +1477,10 @@ async function saveContact() {
   const name = (v(r, 'A') || 'ללא שם') + (r.isLead ? ' ליד' : ' לקוח');
   const intl = phone.startsWith('0') ? '+972' + phone.slice(1) : '+' + phone;
   const p2 = v(r, 'F').replace(/\D/g, ''), mail = clientEmail(r);
-  // אנדרואיד: פותחים ישר את מסך "הוספת איש קשר" עם השם והמספר (בלי קובץ). נשאר רק ללחוץ "שמור".
-  if (/Android/i.test(navigator.userAgent)) {
-    const ex = (k, val) => val ? 'S.' + k + '=' + encodeURIComponent(val) + ';' : '';
-    const a = document.createElement('a');
-    a.href = 'intent:#Intent;action=android.intent.action.INSERT;type=vnd.android.cursor.dir/contact;' +
-      ex('name', name) + ex('phone', intl) + ex('secondary_phone', p2.length >= 9 ? p2 : '') + ex('email', mail) + 'end';
-    document.body.appendChild(a); a.click(); a.remove();
-    return;
-  }
   const vcf = ['BEGIN:VCARD', 'VERSION:3.0', 'FN:' + name, 'N:;' + name + ';;;', 'TEL;TYPE=CELL:' + intl]
     .concat(p2.length >= 9 ? ['TEL;TYPE=CELL:' + (p2.startsWith('0') ? '+972' + p2.slice(1) : '+' + p2)] : [])
     .concat(mail ? ['EMAIL:' + mail] : []).concat(['END:VCARD']).join('\r\n');
+  // אנדרואיד לא מאפשר לאתר לפתוח ישר את מסך "הוספת איש קשר" (נוסה 19.11.26 – לא עבד), ולכן הכרטיס יורד ונפתח מההתראה
   const file = new File([vcf], name.replace(/[\/:*?"<>|]/g, '') + '.vcf', { type: 'text/vcard' });
   try {
     if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; }
@@ -1497,7 +1489,7 @@ async function saveContact() {
   a.href = URL.createObjectURL(file); a.download = file.name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  toast('הכרטיס ירד – פתח אותו כדי לשמור באנשי הקשר');
+  toast('הכרטיס ירד – לחץ "פתח" בהודעה שלמטה ואז "שמור"');
 }
 function toast(msg, err) {
   const t = document.getElementById('toast');
