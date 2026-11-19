@@ -1481,10 +1481,8 @@ async function saveContact() {
     .concat(p2.length >= 9 ? ['TEL;TYPE=CELL:' + (p2.startsWith('0') ? '+972' + p2.slice(1) : '+' + p2)] : [])
     .concat(mail ? ['EMAIL:' + mail] : []).concat(['END:VCARD']).join('\r\n');
   // אנדרואיד לא מאפשר לאתר לפתוח ישר את מסך "הוספת איש קשר" (נוסה 19.11.26 – לא עבד), ולכן הכרטיס יורד ונפתח מההתראה
-  const file = new File([vcf], name.replace(/[\/:*?"<>|]/g, '') + '.vcf', { type: 'text/vcard' });
-  try {
-    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; }
-  } catch (e) { if (e && e.name === 'AbortError') return; }
+  const file = new File([vcf], name.replace(/[\/:*?"<>|]/g, '') + '.vcf', { type: 'text/x-vcard' });
+  // תמיד הורדה (מסך השיתוף התנהג שונה בכל מכשיר)
   const a = document.createElement('a');
   a.href = URL.createObjectURL(file); a.download = file.name;
   document.body.appendChild(a); a.click(); a.remove();
