@@ -144,6 +144,8 @@ function buildRows() {
     const r = { row: S.data.firstRow + i, values };
     if (!values.slice(0, 12).some(x => String(x).trim())) { r.empty = true; return r; }
     r.isLead = v(r, 'G').startsWith('ליד');
+    r.isService = v(r, 'G') === SERVICE; // פניית שירות: מתנהגת כמו ליד במסך היום, לא נספרת בדשבורד
+    r.follow = r.isLead || r.isService;
     r.active = v(r, 'H') === 'פעיל';
     const k = v(r, 'K'), kd = parseDate(k);
     r.kTime = kd ? kd.getTime() : null;
@@ -152,13 +154,16 @@ function buildRows() {
     // ברשימת "עוד לא דיברו איתם" – רק אם אין תאריך חזרה (תאריך עתידי / היום / באיחור / מלאי – מופיע במקום שלו)
     r.fresh = r.never && (r.due === 'none' || r.due === 'other');
     // נריה רואה מהרכישות רק פגישות (לא לקוחות ליווי/צמיחה) – בתצוגה בלבד; השכר והדשבורד מחושבים מכל השורות
-    r.hidden = S.data.me === 'נריה' && !r.isLead && v(r, 'G') !== 'רכש פגישה';
+    r.hidden = S.data.me === 'נריה' && !r.follow && v(r, 'G') !== 'רכש פגישה';
     r.fp = [values[0], values[4], values[6], values[9]].join('|');
     r.search = (values[0] + ' ' + values[1] + ' ' + values[3] + ' ' + values[4] + ' ' + values[5] + ' ' + values[8]).toLowerCase();
     return r;
   }).filter(r => !r.empty);
 }
+const SERVICE = 'פניית שירות';
 const openLeads = () => S.rows.filter(r => r.isLead && r.active);
+/** מסך היום: לידים ופניות שירות פתוחים */
+const openWork = () => S.rows.filter(r => r.follow && r.active);
 /** ליד שעוד לא דיברו איתו: אין בסיכום אף שורה של אדם. נחשבות "לא קשר" רק שורות של מערכות ייבוא
  *  (ManyChat, וובינר וכד') ושורות מערכת בסוגריים כמו "[הועבר לטיפול …]". */
 const IMPORT_AUTHORS = ['ManyChat', 'וובינר', 'ייבוא', 'טופס', 'אתר', 'קלוד'];
@@ -246,7 +251,7 @@ function dueBadge(r) {
   if (r.due === 'stock') return '<span class="badge gray">מלאי</span>';
   if (r.due === 'future') return `<span class="badge">${esc(v(r, 'K'))}</span>`;
   if (r.due === 'closed') return `<span class="badge gray">חזרה: ${esc(v(r, 'K'))}</span>`;
-  if (r.isLead && r.active) return '<span class="badge gray">אין תאריך חזרה</span>';
+  if (r.follow && r.active) return '<span class="badge gray">אין תאריך חזרה</span>';
   return '';
 }
 const freshBadge = r => r.fresh ? '<span class="badge purple">&#x1F44B; עוד לא דיברו איתו</span>' : '';
@@ -262,7 +267,7 @@ function leadItem(r) {
     <div class="main">
       <div class="name">${esc(v(r, 'A') || '(ללא שם)')}</div>
       <div class="sub">${esc(v(r, 'G'))} · ${esc(v(r, 'C'))}</div>
-      <div>${freshBadge(r)}${statusBadge(r)}${dueBadge(r)}</div>
+      <div>${r.isService ? '<span class="badge orange">&#x1F6CE; פניית שירות</span>' : ''}${freshBadge(r)}${statusBadge(r)}${dueBadge(r)}</div>
     </div>
     <div class="acts" onclick="event.stopPropagation()">
       ${phone ? `<a class="icon ph" href="tel:${esc(phone)}" onclick="return dial(this)" title="חיוג">${ICON.phone}</a>
@@ -305,7 +310,7 @@ function saveOrder() {
 }
 function jumpTo(id) { const el = document.getElementById(id); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 function viewToday() {
-  const mine = openLeads().filter(r => v(r, 'C') === S.data.me);
+  const mine = openWork().filter(r => v(r, 'C') === S.data.me);
   // לידים שעוד לא דיברו איתם – למעלה, ובנפרד (לא מופיעים שוב בשאר הקבוצות)
   const fresh = manualSort(mine.filter(r => r.fresh));
   const rest = mine.filter(r => !r.fresh);
@@ -343,8 +348,8 @@ function filtered() {
     if (S.data.handlers.includes(f.who) && c !== f.who) return false;
     if (f.who === 'others' && S.data.handlers.includes(c)) return false;
     if (String(f.who).startsWith('adv:') && c !== f.who.slice(4)) return false;
-    if (f.stage === 'leads' && !r.isLead) return false;
-    if (f.stage === 'buys' && r.isLead) return false;
+    if (f.stage === 'leads' && !r.follow) return false;
+    if (f.stage === 'buys' && r.follow) return false;
     if (f.stage && !['leads', 'buys'].includes(f.stage) && v(r, 'G') !== f.stage) return false;
     if (f.status && v(r, 'H') !== f.status) return false;
     if (f.due === 'late' && r.due !== 'overdue') return false;
@@ -377,7 +382,7 @@ function viewAll() {
   return `<h2>כל השורות</h2>
     <div class="chips">${whoChips}</div>
     <div class="filters">
-      <select onchange="setF('stage',this.value)">${opt('', 'כל השלבים', f.stage)}${opt('leads', 'לידים בלבד', f.stage)}${opt('buys', 'רכישות בלבד', f.stage)}${(L.G || []).map(g => opt(g, g, f.stage)).join('')}</select>
+      <select onchange="setF('stage',this.value)">${opt('', 'כל השלבים', f.stage)}${opt('leads', 'לידים ופניות שירות', f.stage)}${opt('buys', 'רכישות בלבד', f.stage)}${(L.G || []).map(g => opt(g, g, f.stage)).join('')}</select>
       <select onchange="setF('status',this.value)">${opt('', 'כל המצבים', f.status)}${statuses.map(s => opt(s, s, f.status)).join('')}</select>
       <select onchange="setF('due',this.value)">${opt('', 'כל תאריכי החזרה', f.due)}${opt('late', 'באיחור', f.due)}${opt('today', 'היום', f.due)}${opt('week', 'בשבוע הקרוב', f.due)}${opt('none', 'ללא תאריך', f.due)}${opt('stock', 'מלאי', f.due)}${opt('fresh', 'עוד לא דיברו איתם', f.due)}</select>
       <input type="search" placeholder="חיפוש: שם, טלפון, מייל, הערות" value="${esc(f.q)}" oninput="S.f.q=this.value;clearTimeout(S.qt);S.qt=setTimeout(()=>{S.limit=100;document.getElementById('res').innerHTML=resList()},250)">
@@ -736,7 +741,7 @@ function openLead(n, keepScroll) {
 /** ליד פעיל שעבדו עליו בכרטיס (הערה, מצב, העברה, עריכה, הקלטה) ואין לו תאריך חזרה או מלאי */
 function missingNext() {
   const r = S.current && (S.rows.find(x => S.currentId && v(x, 'AO') === S.currentId) || rowByNum(S.current.row));
-  return r && S.touchedId && S.touchedId === (S.currentId || S.current.row) && r.isLead && r.active && (r.due === 'none' || r.due === 'other');
+  return r && S.touchedId && S.touchedId === (S.currentId || S.current.row) && r.follow && r.active && (r.due === 'none' || r.due === 'other');
 }
 function closeLead(fromHistory) {
   if (missingNext()) {
@@ -794,7 +799,7 @@ function leadPanel(r) {
       ${v(r, 'K') ? `<button class="btn ghost" onclick="setNext('')">נקה</button>` : ''}</div>
   </div>
 
-  <div class="card">
+  ${r.isService ? serviceStatusCard(r) : `<div class="card">
     <label>מצב</label>
     <div class="row">${(r.isLead ? S.data.statuses : ['פעיל', 'סיום']).map(s => `<button class="btn ${s === H ? 'on' : 'light'}" onclick="setStatus('${s}')">${s === 'סיום' && !r.isLead ? 'סיום ליווי' : s}</button>`).join('')}</div>
     ${H === 'סיום' && v(r, 'AQ') ? `<div class="muted" style="margin-top:6px">סיבת סיום: <b>${esc(v(r, 'AQ'))}</b></div>` : ''}
@@ -803,7 +808,7 @@ function leadPanel(r) {
     : `<label>החלפת יועץ</label>
     <div class="row"><select id="advSel" style="max-width:220px">${(S.data.lists.C || []).map(a => `<option ${a === C ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select>
       <button class="btn light" onclick="const v=document.getElementById('advSel').value; if (v !== '${esc(C)}') transfer(v)">החלף</button></div>`}
-  </div>
+  </div>`}
 
   ${!r.isLead && v(r, 'G') === 'רכש פגישה' && H === 'פעיל' ? bookingCard(r) : ''}
 
@@ -818,6 +823,8 @@ function leadPanel(r) {
     <div id="notesBox"><div class="notes">${esc(v(r, 'I')) || '<span class="muted">אין עדיין הערות</span>'}</div></div></div>
 
   ${rel.length ? `<h3>שורות נוספות של אותו לקוח (${rel.length})</h3>${rel.map(leadItem).join('')}` : ''}
+
+  ${serviceNewCard(r)}
 
   <div class="card"><details><summary>&#x270F; כל השדות</summary>${fieldsForm(r)}</details></div>
 
@@ -1073,7 +1080,7 @@ function askEndReason(r) {
   });
 }
 async function transfer(to) {
-  if (!confirm((S.current.isLead ? 'להעביר את ' + v(S.current, 'A') + ' לטיפול ' : 'להחליף את היועץ של ' + v(S.current, 'A') + ' ל') + to + '?')) return;
+  if (!confirm((S.current.follow ? 'להעביר את ' + v(S.current, 'A') + ' לטיפול ' : 'להחליף את היועץ של ' + v(S.current, 'A') + ' ל') + to + '?')) return;
   await writeCall('transfer', { ...ref(), to }, 'הליד הועבר ל' + to);
   openLead(S.current.row, true);
 }
@@ -1271,7 +1278,7 @@ async function saveFields() {
 /* ---------- ליד חדש ---------- */
 function viewNew() {
   const L = S.data.lists, me = S.data.me;
-  const leadStages = (L.G || []).filter(x => x.startsWith('ליד'));
+  const leadStages = (L.G || []).filter(x => x.startsWith('ליד')).concat([SERVICE]);
   const sel = (id, opts, cur, empty) => `<select id="${id}">${empty ? '<option value=""></option>' : ''}${opts.map(o => `<option ${o === cur ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
   return `<h2>ליד חדש</h2><div class="card">
     <div class="grid2">
@@ -1421,6 +1428,44 @@ async function meetSave(kind) {
     S.meetStep = 'held'; S.meetK = '';
     if (pendMeets().length) meetRender(); else meetClose();
   } catch (e) { /* ההודעה כבר הוצגה */ }
+}
+/* ---------- פניות שירות (19.11.26) ---------- */
+function serviceStatusCard(r) {
+  const H = v(r, 'H'), C = v(r, 'C');
+  return `<div class="card"><label>&#x1F6CE; פניית שירות · ${H === 'פעיל' ? 'פתוחה' : 'טופלה'}</label>
+    ${H === 'פעיל' ? `<textarea id="svcDone" placeholder="איך הפנייה טופלה? (חובה)"></textarea>
+      <div class="row" style="margin-top:6px"><button class="btn teal" onclick="serviceDone()">&#x2713; טופל – לסגור את הפנייה</button></div>`
+      : `<div class="row"><button class="btn light" onclick="setStatus('פעיל')">לפתוח מחדש</button></div>`}
+    <label>העברה לטיפול</label>
+    <div class="row">${S.data.handlers.map(h => `<button class="btn ${h === C ? 'on' : 'light'}" ${h === C ? 'disabled' : ''} onclick="transfer('${h}')">${h}</button>`).join('')}</div></div>`;
+}
+async function serviceDone() {
+  const t = (document.getElementById('svcDone') || {}).value.trim();
+  if (!t) return toast('כתוב בקצרה איך הפנייה טופלה', true);
+  await writeCall('setStatus', { ...ref(), status: 'סיום', note: '[טופל] ' + t }, 'הפנייה נסגרה');
+  openLead(S.current.row, true);
+}
+function serviceNewCard(r) {
+  const toSun = (7 - today0().getDay()) % 7 || 7;
+  const q = [['מחר', 1], ['ראשון הקרוב', toSun], ['שבוע', 7]];
+  return `<div class="card"><details id="svcBox"><summary>&#x1F6CE; פנייה חדשה מהלקוח (פניית שירות)</summary>
+    <div class="muted" style="margin:6px 0">שורה חדשה בשלב "פניית שירות" עם פרטי הלקוח. מופיעה במסך "היום" של המטפל, עם תאריך חזרה וסיכום, עד שמסמנים "טופל".</div>
+    <label>במה מדובר? *</label><textarea id="svcNote" placeholder="למשל: שאלה על חשבונית, ביקש לדבר עם היועץ…"></textarea>
+    <div class="row" style="margin-top:6px"><span class="muted">מי מטפל:</span>
+      ${S.data.handlers.map(h => `<button class="btn light${h === S.data.me ? ' on' : ''} svcC" data-c="${esc(h)}" onclick="document.querySelectorAll('.svcC').forEach(b=>b.classList.toggle('on',b===this))">${esc(h)}</button>`).join('')}</div>
+    <div class="row" style="margin-top:6px"><span class="muted">תאריך חזרה:</span>
+      ${q.map(([t, d]) => `<button class="btn light" onclick="document.getElementById('svcK').value='${iso(addDays(today0(), d))}'">${t}</button>`).join('')}
+      <input type="date" id="svcK" value="${iso(addDays(today0(), 1))}" style="max-width:170px"></div>
+    <div class="row" style="margin-top:8px"><button class="btn teal" onclick="serviceNew()">&#x2713; פתח פניית שירות</button></div>
+  </details></div>`;
+}
+async function serviceNew() {
+  const note = document.getElementById('svcNote').value.trim();
+  const on = document.querySelector('.svcC.on'), K = document.getElementById('svcK').value;
+  if (!note) return toast('כתוב במה מדובר בפנייה', true);
+  if (!on) return toast('בחר מי מטפל', true);
+  const res = await writeCall('service', { ...ref(), note, C: on.dataset.c, K }, 'נפתחה פניית שירות');
+  if (res.newRow) openLead(res.newRow);
 }
 function toast(msg, err) {
   const t = document.getElementById('toast');
