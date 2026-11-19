@@ -1029,12 +1029,13 @@ async function setStatus(status) {
     const box = document.getElementById('saleBox');
     if (box && !confirm('לסמן "נמכר" בלי לפתוח שורת רכש?\nלחץ "ביטול" כדי למלא את פרטי הרכישה.')) { box.open = true; box.scrollIntoView({ behavior: 'smooth' }); return; }
   }
-  let reason = '';
+  let reason = '', note = '';
   if (status === 'סיום') {
     reason = await askEndReason(S.current);
     if (!reason) return;
+    if (typeof reason === 'object') { note = reason.note; reason = reason.reason; }
   }
-  await writeCall('setStatus', { ...ref(), status, reason }, 'המצב עודכן');
+  await writeCall('setStatus', { ...ref(), status, reason, ...(note ? { note } : {}) }, 'המצב עודכן');
   openLead(S.current.row, true);
 }
 
@@ -1047,11 +1048,21 @@ function askEndReason(r) {
     wrap.innerHTML = `<div class="card" style="max-width:420px;width:100%;margin:0">
       <h3 style="margin-top:0">${lead ? 'למה הליד נסגר?' : 'מה גרם ללקוח לסיים?'}</h3>
       <div class="muted" style="margin-bottom:8px">${esc(v(r, 'A'))} · ${esc(v(r, 'G'))}${lead ? '' : '<br>תאריך הסיום יהיה היום.'}</div>
-      ${lead ? opts.map(o => `<button class="btn light erOpt" style="display:block;width:100%;margin:6px 0;text-align:right">${esc(o)}</button>`).join('')
+      ${lead ? opts.map(o => `<button class="btn light erOpt" style="display:block;width:100%;margin:6px 0;text-align:right">${esc(o)}</button>`).join('') +
+          // "אחר": שדה חופשי. הסיבה בגליון = "אחר", והפירוט נכנס לסיכום (שמואל, 19.11.26)
+          '<div id="erOther" style="display:none;margin-top:6px"><textarea id="erOtherText" style="width:100%;min-height:70px" placeholder="פרט למה הליד נסגר"></textarea><div class="row" style="margin-top:6px"><button class="btn" id="erOtherOk">&#x2713; אישור</button></div></div>'
         : '<textarea id="erText" style="width:100%;min-height:90px" placeholder="כתוב בקצרה מה גרם לו לסיים"></textarea><div class="row" style="margin-top:8px"><button class="btn" id="erOk">סיום ליווי</button></div>'}
-      <div class="row" style="margin-top:8px"><button class="btn light" id="erCancel">ביטול</button></div></div>`;
+      <div style="display:flex;justify-content:flex-end;margin-top:14px;border-top:1px solid var(--line);padding-top:10px"><button class="btn ghost" id="erCancel">&#x2715; ביטול</button></div></div>`;
     const done = val => { wrap.remove(); resolve(val); };
-    wrap.querySelectorAll('.erOpt').forEach(b => b.onclick = () => done(b.textContent.trim()));
+    wrap.querySelectorAll('.erOpt').forEach(b => b.onclick = () => {
+      const o = b.textContent.trim();
+      if (o !== 'אחר') return done(o);
+      wrap.querySelectorAll('.erOpt').forEach(x => x.classList.toggle('on', x === b));
+      wrap.querySelector('#erOther').style.display = 'block';
+      wrap.querySelector('#erOtherText').focus();
+    });
+    const oo = wrap.querySelector('#erOtherOk');
+    if (oo) oo.onclick = () => { const t = wrap.querySelector('#erOtherText').value.trim(); if (!t) return toast('כתוב בקצרה למה הליד נסגר', true); done({ reason: 'אחר', note: 'סיבת סגירה: ' + t }); };
     wrap.querySelector('#erCancel').onclick = () => done('');
     const ok = wrap.querySelector('#erOk');
     if (ok) ok.onclick = () => { const t = wrap.querySelector('#erText').value.trim(); if (!t) return toast('חובה לכתוב סיבה', true); done(t); };
