@@ -760,7 +760,9 @@ function leadPanel(r) {
   const phone = v(r, 'E'), phone2 = v(r, 'F'), email = v(r, 'D'), me = S.data.me;
   const H = v(r, 'H'), C = v(r, 'C');
   const rel = related(r);
-  const quick = [['מחר', 1], ['3 ימים', 3], ['שבוע', 7], ['שבועיים', 14], ['חודש', 30]];
+  // "ראשון הקרוב" (אפרים, 19.11.26): הלקוח אומר "דבר איתי שבוע הבא". ביום ראשון עצמו – ראשון של השבוע הבא
+  const toSun = (7 - today0().getDay()) % 7 || 7;
+  const quick = [['מחר', 1], ['3 ימים', 3], ['ראשון הקרוב', toSun], ['שבוע', 7], ['שבועיים', 14], ['חודש', 30]];
   return `<div class="top"><button class="btn ghost" onclick="closeLead()">&#x2192; חזרה</button><h2>${esc(v(r, 'A') || '(ללא שם)')}</h2></div>
   ${r.never ? `<div class="card" style="background:#F3EDFF;border-color:#B79CF0;color:#4A1FA0"><b>&#x1F44B; עוד אף אחד לא יצר קשר עם הליד הזה.</b> זה הזמן להתקשר. אחרי השיחה רושמים הערה, והסימון יורד.</div>` : ''}
   <div class="card">
