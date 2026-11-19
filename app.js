@@ -776,7 +776,8 @@ function leadPanel(r) {
     <div class="row" style="margin-top:10px">
       ${phone ? `<a class="btn light" href="tel:${esc(phone)}" onclick="return dial(this)">${ICON.phone} ${esc(phone)}</a>
         <a class="btn light" style="color:#128C7E" href="https://wa.me/${waPhone(phone)}" target="_blank">${ICON.wa} וואטסאפ</a>
-        <button class="btn teal" onclick="pickTemplate()">${ICON.wa} &#x2709; שלח טקסט מוכן</button>` : clientEmail(r) ? `<span class="muted">אין טלפון</span> <button class="btn teal" onclick="pickTemplate()">&#x2709; שלח טקסט מוכן במייל</button>` : '<span class="muted">אין טלפון</span>'}
+        <button class="btn teal" onclick="pickTemplate()">${ICON.wa} &#x2709; שלח טקסט מוכן</button>
+        <button class="btn ghost" onclick="saveContact()" title="שמירת המספר באנשי הקשר בטלפון">&#x1F4BE; שמירה באנשי קשר</button>` : clientEmail(r) ? `<span class="muted">אין טלפון</span> <button class="btn teal" onclick="pickTemplate()">&#x2709; שלח טקסט מוכן במייל</button>` : '<span class="muted">אין טלפון</span>'}
       ${phone2 ? `<a class="btn ghost" href="tel:${esc(phone2)}" onclick="return dial(this)">${ICON.phone} ${esc(phone2)}</a>` : ''}
       ${email ? `<a class="btn ghost" href="mailto:${esc(email)}" target="_blank">&#x2709; ${esc(email)}</a>` : ''}
     </div>
@@ -1466,6 +1467,28 @@ async function serviceNew() {
   if (!on) return toast('בחר מי מטפל', true);
   const res = await writeCall('service', { ...ref(), note, C: on.dataset.c, K }, 'נפתחה פניית שירות');
   if (res.newRow) openLead(res.newRow);
+}
+/* ---------- שמירה באנשי קשר (אפרים, 19.11.26) ----------
+ * אפליקציית אינטרנט לא יכולה לשמור איש קשר לבד: יוצרים כרטיס vCard. בטלפון נפתח מסך השיתוף (בוחרים "אנשי קשר"),
+ * ואם אין שיתוף – הכרטיס יורד ונפתח באנשי הקשר. השם: "<שם> ליד", ובשורות שאינן ליד – "<שם> לקוח". */
+async function saveContact() {
+  const r = S.current, phone = v(r, 'E').replace(/\D/g, '');
+  if (!phone) return toast('אין מספר טלפון', true);
+  const name = (v(r, 'A') || 'ללא שם') + (r.isLead ? ' ליד' : ' לקוח');
+  const intl = phone.startsWith('0') ? '+972' + phone.slice(1) : '+' + phone;
+  const p2 = v(r, 'F').replace(/\D/g, ''), mail = clientEmail(r);
+  const vcf = ['BEGIN:VCARD', 'VERSION:3.0', 'FN:' + name, 'N:;' + name + ';;;', 'TEL;TYPE=CELL:' + intl]
+    .concat(p2.length >= 9 ? ['TEL;TYPE=CELL:' + (p2.startsWith('0') ? '+972' + p2.slice(1) : '+' + p2)] : [])
+    .concat(mail ? ['EMAIL:' + mail] : []).concat(['END:VCARD']).join('\r\n');
+  const file = new File([vcf], name.replace(/[\/:*?"<>|]/g, '') + '.vcf', { type: 'text/vcard' });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; }
+  } catch (e) { if (e && e.name === 'AbortError') return; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(file); a.download = file.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast('הכרטיס ירד – פתח אותו כדי לשמור באנשי הקשר');
 }
 function toast(msg, err) {
   const t = document.getElementById('toast');

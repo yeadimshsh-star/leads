@@ -3,7 +3,7 @@ window.PWA = (function () {
   const CLIENT_ID = '77339980151-alkogpsuis064johrb34vu8f9ust627b.apps.googleusercontent.com';
   const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbya0DwvJW0-Zberca99kAYBRwnNYIGGO4iieTTdD3cKpJqpw_2yHG_jqC37sBGF3NRz/exec';
   const REDIRECT_URI = location.origin + location.pathname;
-  const TOKEN_KEY = 'yaadim-id-token', NONCE_KEY = 'yaadim-nonce', HINT_KEY = 'yaadim-login-hint';
+  const TOKEN_KEY = 'yaadim-id-token', NONCE_KEY = 'yaadim-nonce', HINT_KEY = 'yaadim-login-hint', SESSION_KEY = 'yaadim-session';
   let token = null, waiting = [], gisStarted = false;
 
   function claims(t) {
@@ -65,19 +65,27 @@ window.PWA = (function () {
       startGis();
     });
   }
+  /** כרטיס כניסה מהשרת, תקף 60 יום ומתחדש לבד (19.11.26) – כך לא צריך להתחבר כל שעה */
+  function getSession() { try { return localStorage.getItem(SESSION_KEY); } catch (e) { return null; } }
   async function call(action, args) {
     for (let attempt = 0; attempt < 2; attempt++) {
-      const t = await getToken();
+      const sess = getSession();
+      const auth = sess ? { session: sess } : { idToken: await getToken() };
       // בלי כותרת Content-Type, כדי שהדפדפן לא ישלח בקשת preflight
-      const res = await fetch(BACKEND_URL, { method: 'POST', body: JSON.stringify({ idToken: t, action, args: args || {} }) });
+      const res = await fetch(BACKEND_URL, { method: 'POST', body: JSON.stringify({ ...auth, action, args: args || {} }) });
       const out = await res.json();
+      if (out.session) { try { localStorage.setItem(SESSION_KEY, out.session); } catch (e) { } }
       if (out.ok) return out.data;
-      if (/התחברות מחדש|אסימון/.test(out.error) && attempt === 0) { token = null; try { localStorage.removeItem(TOKEN_KEY); } catch (e) { } gisStarted = false; continue; }
+      if (/התחברות מחדש|אסימון/.test(out.error) && attempt === 0) {
+        if (sess) { try { localStorage.removeItem(SESSION_KEY); } catch (e) { } }
+        else { token = null; try { localStorage.removeItem(TOKEN_KEY); } catch (e) { } gisStarted = false; }
+        continue;
+      }
       throw new Error(out.error);
     }
   }
   function signOut() {
-    try { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(HINT_KEY); } catch (e) { }
+    try { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(HINT_KEY); localStorage.removeItem(SESSION_KEY); } catch (e) { }
     if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect();
     location.reload();
   }
