@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>הוספת הפגישה ליומן - יעדים</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #F4F7FC; color: #1A2340; margin: 0; padding: 40px 16px; text-align: center; }
+  .card { max-width: 420px; margin: 0 auto; background: #fff; border-radius: 14px; padding: 24px 18px; box-shadow: 0 2px 10px rgba(0,30,90,.08); }
+  a.btn { display: inline-block; margin-top: 14px; background: #003DB8; color: #fff; text-decoration: none; padding: 12px 20px; border-radius: 10px; font-weight: bold; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h2 id="h">מעבירים ליומן…</h2>
+  <div id="w"></div>
+  <a class="btn" id="go" href="#">הוספה ל-Google Calendar</a>
+</div>
+<script>
+// קישור "הוספה ליומן" מהודעת הזימון של יעדים: ?d=ddMMyyHHmm (שעון ישראל) &m=f (פרונטלי) | z (זום)
+(function () {
+  var p = new URLSearchParams(location.search), d = p.get('d') || '', m = p.get('m') === 'z' ? 'z' : 'f';
+  if (!/^\d{10}$/.test(d)) { document.getElementById('h').textContent = 'הקישור לא תקין'; document.getElementById('go').style.display = 'none'; return; }
+  var day = d.slice(0, 2), mon = d.slice(2, 4), yr = '20' + d.slice(4, 6), hh = +d.slice(6, 8), mm = d.slice(8, 10);
+  var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+  var start = yr + mon + day + 'T' + pad(hh) + mm + '00', end = yr + mon + day + 'T' + pad(hh + 1) + mm + '00';
+  var title = m === 'z' ? 'פגישת פיצוח אסטרטגית בזום עם אפרים בן שוחט - יעדים' : "פגישת פיצוח אסטרטגית במשרד 'יעדים' עם אפרים בן שוחט";
+  var loc = m === 'z' ? 'https://us02web.zoom.us/j/8956888729' : 'שלהבת 219, יצהר';
+  var url = 'https://calendar.google.com/calendar/render?action=TEMPLATE&text=' + encodeURIComponent(title) +
+    '&dates=' + start + '/' + end + '&location=' + encodeURIComponent(loc) + '&ctz=Asia/Jerusalem';
+  document.getElementById('w').textContent = day + '.' + mon + '.' + yr.slice(2) + ' בשעה ' + pad(hh) + ':' + mm + (m === 'z' ? ' · בזום' : ' · במשרד יעדים');
+  document.getElementById('go').href = url;
+  location.replace(url);
+})();
+</script>
+</body>
+</html>
