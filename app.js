@@ -63,7 +63,7 @@ function setWho(updating) {
 }
 /** האם המשתמש באמצע הקלדה או עריכה – אז לא מרעננים כדי לא למחוק לו את מה שכתב. */
 function isTyping() {
-  if (S.recBusy) return true; // באמצע העלאת הקלטה – לא מרעננים את המסך
+  if (S.recBusy || S.mic) return true; // באמצע הקלטה או העלאה – לא מרעננים את המסך
   const a = document.activeElement;
   if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
   return [...document.querySelectorAll('#panel textarea, #panel input, #main textarea, #main input:not([type=search])')]
@@ -836,10 +836,11 @@ const REC_MAX_MB = 100;
 function recCard(r) {
   const list = ((S.data.transcripts || {})[v(r, 'AO')] || []).slice().reverse();
   return `<div class="card" id="recCard"><label>&#x1F399; הקלטת שיחה</label>
-    <div class="muted" style="margin-bottom:6px">בוחרים את קובץ ההקלטה מהטלפון. ההקלטה עוברת תמלול ונמחקת. התמלול המלא נשמר, וסיכום קצר נכנס לסיכום השיחה.</div>
+    <div class="muted" style="margin-bottom:6px">מעלים קובץ הקלטה מהטלפון, או מקליטים ישירות כאן. ההקלטה עוברת תמלול ונמחקת. התמלול המלא נשמר, וסיכום קצר נכנס לסיכום השיחה.</div>
     <input type="file" id="recFile" accept="audio/*,.m4a,.amr,.3gp,.opus,.aac,.mp3,.ogg,.wav,.flac" style="display:none" onchange="uploadRec(this)">
-    <div class="row"><button class="btn" id="recBtn" onclick="document.getElementById('recFile').click()" ${v(r, 'AO') ? '' : 'disabled'}>&#x1F399; העלאת הקלטה</button></div>
-    <div id="recProg">${recStateHtml(v(r, 'AO'))}</div>
+    <div class="row"><button class="btn" id="recBtn" onclick="document.getElementById('recFile').click()" ${v(r, 'AO') ? '' : 'disabled'}>&#x1F399; העלאת הקלטה</button>
+      <button class="btn light" id="micBtn" onclick="startMic()" ${v(r, 'AO') && !S.mic ? '' : 'disabled'}>&#x1F534; הקלטה עכשיו</button></div>
+    <div id="recProg">${S.mic && S.mic.id === v(r, 'AO') ? micHtml() : recStateHtml(v(r, 'AO'))}</div>
     ${list.length ? `<label style="margin-top:10px">תמלולים</label><div class="row">${list.map(t => `<button class="btn light" onclick="showTranscript('${esc(t.doc)}')">&#x1F4C4; תמלול מלא · ${esc(t.date)}${t.by ? ' · ' + esc(t.by) : ''}${t.dur ? ' · ' + Math.max(1, Math.round(t.dur / 60)) + ' דק&#x27;' : ''}</button>`).join('')}</div>` : ''}
     <div id="trBox"></div></div>`;
 }
@@ -891,13 +892,17 @@ async function sendChunk(uid, off, data) {
 async function uploadRec(input) {
   const f = input.files && input.files[0]; input.value = '';
   if (!f || S.recBusy) return;
+  await recSend(f, S.current, ref(), 0);
+}
+/** שליחת קובץ שמע לתמלול. recDur > 0 = הקלטה שנעשתה באפליקציה (בלי שאלת אישור) */
+async function recSend(f, r, base, recDur) {
   const m = f.name.match(/\.([a-z0-9]+)$/i), ext = m ? m[1].toLowerCase() : '';
   const mb = f.size / 1048576;
   if (mb > REC_MAX_MB) return toast('ההקלטה גדולה מדי (' + Math.round(mb) + 'MB). המקסימום ' + REC_MAX_MB + 'MB.', true);
-  const r = S.current, base = ref(), id = v(r, 'AO');
-  const dur = await audioDuration(f);
+  const id = v(r, 'AO');
+  const dur = recDur || await audioDuration(f);
   const len = dur ? ', ' + Math.max(1, Math.round(dur / 60)) + ' דקות' : '';
-  if (!confirm('להעלות את "' + f.name + '" (' + mb.toFixed(1) + 'MB' + len + ') לתמלול ולסיכום של ' + v(r, 'A') + '?\n\nההקלטה עצמה לא נשמרת.')) return;
+  if (!recDur && !confirm('להעלות את "' + f.name + '" (' + mb.toFixed(1) + 'MB' + len + ') לתמלול ולסיכום של ' + v(r, 'A') + '?\n\nההקלטה עצמה לא נשמרת.')) return;
   S.recBusy = true;
   const btn = document.getElementById('recBtn'); if (btn) btn.disabled = true;
   window.onbeforeunload = () => 'ההעלאה עוד לא הסתיימה';
@@ -928,6 +933,75 @@ async function uploadRec(input) {
     S.recBusy = false; window.onbeforeunload = null;
     const b = document.getElementById('recBtn'); if (b) b.disabled = false;
   }
+}
+/* ---------- הקלטה ישירה באפליקציה (23.11.26): מקליטים מהמיקרופון ושולחים לאותו תמלול ---------- */
+const MIC_MAX_SEC = 60 * 60;
+function micHtml() {
+  const m = S.mic; if (!m) return '';
+  const sec = Math.floor((Date.now() - m.t0) / 1000), mm = Math.floor(sec / 60), ss = sec % 60;
+  return `<div class="notes" style="margin-top:8px;text-align:center"><div style="font-size:22px;font-weight:bold;color:#c00">&#x1F534; ${mm}:${ss < 10 ? '0' : ''}${ss}</div>
+    <div class="muted">מקליט… המסך יישאר דלוק. עד 60 דקות.</div>
+    <div class="row" style="justify-content:center;margin-top:8px"><button class="btn" onclick="stopMic(false)">&#x23F9; סיום ושליחה</button>
+    <button class="btn ghost" onclick="stopMic(true)">&#x2715; ביטול</button></div></div>`;
+}
+function micTick() {
+  const m = S.mic; if (!m) return;
+  if ((Date.now() - m.t0) / 1000 >= MIC_MAX_SEC) return stopMic(false);
+  const el = document.getElementById('recProg');
+  if (el && S.current && v(S.current, 'AO') === m.id) el.innerHTML = micHtml();
+}
+async function micWake() {
+  const m = S.mic; if (!m || document.visibilityState !== 'visible') return;
+  try { if (navigator.wakeLock) m.wake = await navigator.wakeLock.request('screen'); } catch (e) { }
+}
+async function startMic() {
+  if (S.recBusy || S.mic) return toast('יש כבר הקלטה או העלאה שפועלת', true);
+  if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder)) return toast('הדפדפן הזה לא מאפשר הקלטה. פתח את האפליקציה המותקנת.', true);
+  const r = S.current, base = ref();
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
+  catch (e) {
+    return toast(window.PWA ? 'אין גישה למיקרופון. צריך לאשר מיקרופון לאפליקציה (בהגדרות האתר בדפדפן).' : 'בקישור הזה הדפדפן חוסם את המיקרופון. להקלטה ישירה פתח את האפליקציה המותקנת.', true);
+  }
+  const type = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+  let rec;
+  try { rec = new MediaRecorder(stream, type ? { mimeType: type, audioBitsPerSecond: 48000 } : {}); }
+  catch (e) { stream.getTracks().forEach(t => t.stop()); return toast('ההקלטה לא הצליחה להתחיל: ' + e.message, true); }
+  const m = { rec, stream, chunks: [], t0: Date.now(), id: v(r, 'AO'), r, base, cancel: false };
+  S.mic = m;
+  rec.ondataavailable = e => { if (e.data && e.data.size) m.chunks.push(e.data); };
+  rec.onstop = () => micDone(m);
+  rec.start(5000);
+  window.onbeforeunload = () => 'ההקלטה עוד פועלת';
+  document.addEventListener('visibilitychange', micWake);
+  micWake();
+  m.tick = setInterval(micTick, 1000);
+  micTick();
+  const b = document.getElementById('micBtn'); if (b) b.disabled = true;
+}
+function stopMic(cancel) {
+  const m = S.mic; if (!m) return;
+  if (cancel && !confirm('לבטל את ההקלטה? היא לא תישמר.')) return;
+  m.cancel = cancel; m.sec = (Date.now() - m.t0) / 1000;
+  clearInterval(m.tick);
+  try { if (m.rec.state !== 'inactive') m.rec.stop(); else micDone(m); } catch (e) { micDone(m); }
+}
+async function micDone(m) {
+  if (m.done) return; m.done = true;
+  m.stream.getTracks().forEach(t => t.stop());
+  try { if (m.wake) m.wake.release(); } catch (e) { }
+  document.removeEventListener('visibilitychange', micWake);
+  S.mic = null; window.onbeforeunload = null;
+  const b = document.getElementById('micBtn'); if (b) b.disabled = false;
+  const sameCard = S.current && v(S.current, 'AO') === m.id;
+  if (m.cancel) { if (sameCard) recProg('ההקלטה בוטלה ולא נשמרה.', -1); return; }
+  const mime = (m.rec.mimeType || (m.chunks[0] && m.chunks[0].type) || 'audio/webm').split(';')[0];
+  const blob = new Blob(m.chunks, { type: mime });
+  if (m.sec < 2 || blob.size < 2000) { if (sameCard) recProg('ההקלטה קצרה מדי ולא נשלחה.', -1); return; }
+  const ext = /mp4|m4a|aac/.test(mime) ? 'm4a' : /ogg/.test(mime) ? 'ogg' : 'webm';
+  const d = new Date(), p = n => (n < 10 ? '0' : '') + n;
+  const f = new File([blob], 'הקלטה באפליקציה ' + p(d.getDate()) + '.' + p(d.getMonth() + 1) + ' ' + p(d.getHours()) + p(d.getMinutes()) + '.' + ext, { type: mime });
+  await recSend(f, m.r, m.base, Math.max(1, Math.round(m.sec)));
 }
 /** בודק כל 20 שניות אם העיבוד ברקע הסתיים (כל עוד הכרטיס של הליד פתוח) */
 async function pollRec(id, base) {
