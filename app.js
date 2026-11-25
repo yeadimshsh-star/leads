@@ -1569,7 +1569,9 @@ function svcResults() {
   const st = svcState(), q = st.q.trim().toLowerCase();
   if (!q) return '';
   const words = q.split(/\s+/);
-  const rows = svcClients().filter(r => words.every(w => r.search.includes(w))).slice(0, 8);
+  // רק שם, טלפון ומייל (לא סיכום השיחה – שם מוזכרים שמות של אחרים)
+  const key = r => ['A', 'B', 'D', 'E', 'F'].map(l => v(r, l)).join(' ').toLowerCase() + ' ' + phonesOf(r).join(' ');
+  const rows = svcClients().filter(r => { const k = key(r); return words.every(w => k.includes(w)); }).slice(0, 8);
   return rows.length ? rows.map(svcClientBtn).join('') : '<div class="muted">לא נמצא לקוח בשם הזה</div>';
 }
 function svcClientBtn(r) {
