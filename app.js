@@ -29,6 +29,41 @@ function call(action, args) {
     google.script.run.withSuccessHandler(s => ok(JSON.parse(s))).withFailureHandler(e => fail(e)).api(action, args || {});
   });
 }
+/* ---------- שמירה ברקע (אפרים, 25.11.26): המסך מתעדכן מיד, והכתיבה לגיליון רצה מאחור בתור ----------
+ * תאריך חזרה, הערה, שינוי מצב והעברת טיפול. אם השמירה נכשלת – הודעה, והנתונים נטענים מחדש מהגיליון. */
+S.bgN = 0; S.bgQ = Promise.resolve();
+window.addEventListener('beforeunload', e => { if (S.bgN) { e.preventDefault(); e.returnValue = 'יש שמירה שעוד לא הסתיימה'; return e.returnValue; } });
+const addLine = line => cur => (cur ? cur + '\n' + line : line);
+function dispDate(isoVal) { if (!isoVal || isoVal === 'מלאי') return isoVal || ''; const [y, m, d] = isoVal.split('-'); return d + '/' + m + '/' + y; }
+function bgWrite(action, args, okMsg, changes) {
+  const r = S.current;
+  if (r) S.touchedId = S.currentId || r.row;
+  if (r && changes) {
+    const vals = r.values.slice();
+    for (const [l, f] of Object.entries(changes)) vals[ci(l)] = typeof f === 'function' ? f(vals[ci(l)] || '') : f;
+    patchRow({ row: r.row, values: vals });
+  }
+  if (okMsg) toast(okMsg);
+  S.bgN++; setWho(true);
+  S.bgQ = S.bgQ.then(async () => {
+    try {
+      const res = await call(action, args);
+      (res.rows || []).forEach(patchRow);
+      if (res.conflicts && res.conflicts.length) toast('חלק מהשדות שונו בינתיים בגליון ולא נשמרו: ' + res.conflicts.join(', '), true);
+      else if (res.warnings && res.warnings.length) toast(res.warnings.join('. '), true);
+    } catch (e) {
+      S.bgFail = true;
+      toast('השמירה לא הצליחה: ' + (e.message || e) + '. השינוי לא נשמר.', true);
+    } finally {
+      S.bgN--;
+      if (!S.bgN) {
+        setWho(false);
+        if (S.bgFail) { S.bgFail = false; reload(true); }
+        else if (!isTyping()) { render(); if (S.current) reopenCurrent(); }
+      }
+    }
+  });
+}
 async function writeCall(action, args, okMsg) {
   busy(true);
   try {
@@ -63,13 +98,14 @@ function setWho(updating) {
 }
 /** האם המשתמש באמצע הקלדה או עריכה – אז לא מרעננים כדי לא למחוק לו את מה שכתב. */
 function isTyping() {
-  if (S.recBusy || S.mic || S.dict) return true; // באמצע הקלטה או העלאה – לא מרעננים את המסך
+  if (S.recBusy || S.mic || S.dict || S.bgN) return true; // באמצע הקלטה או העלאה – לא מרעננים את המסך
   const a = document.activeElement;
   if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
   return [...document.querySelectorAll('#panel textarea, #panel input, #main textarea, #main input:not([type=search])')]
     .some(el => el.classList.contains('changed') || (el.tagName === 'TEXTAREA' && el.value.trim() && !el.dataset.old));
 }
 async function reload(quiet) {
+  if (S.bgN) return; // יש שמירות ברקע – נטען אחרי שיסתיימו
   if (!quiet && !S.data) document.getElementById('main').innerHTML = '<div class="card muted">טוען נתונים…</div>';
   if (S.data) setWho(true);
   try {
@@ -320,7 +356,7 @@ function viewToday() {
   const none = manualSort(rest.filter(r => r.due === 'none' || r.due === 'other'));
   const week = manualSort(rest.filter(r => r.due === 'future' && r.kTime <= addDays(today0(), 7).getTime()));
   const stock = rest.filter(r => r.due === 'stock').length;
-  return `<h2>היום של ${esc(S.data.me)}</h2>${clockCard()}
+  return `${S.data.canClients ? asCard() : ''}<h2>היום של ${esc(S.data.me)}</h2>${clockCard()}
     <div class="stats">
       <div class="stat orange" onclick="jumpTo('sec-today')"><b>${tod.length}</b><span>להיום</span></div>
       <div class="stat red" onclick="jumpTo('sec-over')"><b>${over.length}</b><span>באיחור</span></div>
@@ -1069,7 +1105,7 @@ async function deleteRow() {
 async function addNote() {
   const text = document.getElementById('note').value.trim();
   if (!text) return toast('ההערה ריקה', true);
-  await writeCall('addNote', { ...ref(), text }, 'ההערה נשמרה');
+  bgWrite('addNote', { ...ref(), text }, 'ההערה נשמרה', { I: addLine(stampNow() + ' ' + S.data.me + ': ' + text) });
   const d = restore(DRAFT_KEY) || {}; delete d[S.currentId + ':note']; store(DRAFT_KEY, d);
   openLead(S.current.row, true);
 }
@@ -1107,7 +1143,7 @@ function pickNext(isoVal) {
 }
 async function setNext(value) {
   if (value === undefined) return;
-  await writeCall('setNext', { ...ref(), value }, value ? 'תאריך החזרה נקבע' : 'תאריך החזרה נוקה');
+  bgWrite('setNext', { ...ref(), value }, value ? 'תאריך החזרה נקבע' : 'תאריך החזרה נוקה', { K: dispDate(value) });
   openLead(S.current.row, true);
 }
 async function setStatus(status) {
@@ -1121,7 +1157,7 @@ async function setStatus(status) {
     if (!reason) return;
     if (typeof reason === 'object') { note = reason.note; reason = reason.reason; }
   }
-  await writeCall('setStatus', { ...ref(), status, reason, ...(note ? { note } : {}) }, 'המצב עודכן');
+  bgWrite('setStatus', { ...ref(), status, reason, ...(note ? { note } : {}) }, 'המצב עודכן', status === 'סיום' && reason ? { H: status, AQ: reason } : { H: status });
   openLead(S.current.row, true);
 }
 
@@ -1158,7 +1194,7 @@ function askEndReason(r) {
 }
 async function transfer(to) {
   if (!confirm((S.current.follow ? 'להעביר את ' + v(S.current, 'A') + ' לטיפול ' : 'להחליף את היועץ של ' + v(S.current, 'A') + ' ל') + to + '?')) return;
-  await writeCall('transfer', { ...ref(), to }, 'הליד הועבר ל' + to);
+  bgWrite('transfer', { ...ref(), to }, (S.current.follow ? 'הליד הועבר ל' : 'היועץ הוחלף ל') + to, { C: to });
   openLead(S.current.row, true);
 }
 
@@ -1623,7 +1659,7 @@ async function svcSubmit() {
   if (res && res.newRow) openLead(res.newRow);
 }
 const DICT_MAX_SEC = 120;
-async function dictStart() {
+async function dictStart(target) {
   if (S.dict || S.mic || S.recBusy) return toast('יש כבר הקלטה שפועלת', true);
   if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder)) return toast('הדפדפן הזה לא מאפשר הקלטה. פתח את האפליקציה המותקנת.', true);
   let stream;
@@ -1633,7 +1669,7 @@ async function dictStart() {
   let rec;
   try { rec = new MediaRecorder(stream, type ? { mimeType: type, audioBitsPerSecond: 32000 } : {}); }
   catch (e) { stream.getTracks().forEach(t => t.stop()); return toast('ההקלטה לא הצליחה להתחיל: ' + e.message, true); }
-  const d = { rec, stream, chunks: [], t0: Date.now(), cancel: false };
+  const d = { rec, stream, chunks: [], t0: Date.now(), cancel: false, target: target || 'svc' };
   S.dict = d;
   rec.ondataavailable = e => { if (e.data && e.data.size) d.chunks.push(e.data); };
   rec.onstop = () => dictDone(d);
@@ -1641,7 +1677,8 @@ async function dictStart() {
   d.tick = setInterval(() => {
     if (S.dict !== d) return clearInterval(d.tick);
     if ((Date.now() - d.t0) / 1000 >= DICT_MAX_SEC) return dictStop(false);
-    if (S.view === 'svc') render();
+    if (d.target === 'svc') { if (S.view === 'svc') render(); return; }
+    const el = document.getElementById('asT'); if (el) el.textContent = mmssOf((Date.now() - d.t0) / 1000);
   }, 1000);
   render();
 }
@@ -1658,6 +1695,7 @@ async function dictDone(d) {
   const mime = (d.rec.mimeType || (d.chunks[0] && d.chunks[0].type) || 'audio/webm').split(';')[0];
   const blob = new Blob(d.chunks, { type: mime });
   if (d.sec < 1.5 || blob.size < 1500) { S.dict = null; render(); return toast('ההקלטה קצרה מדי', true); }
+  if (d.target === 'as') { S.dict = null; return asSend({ data: await blobB64(blob), mime }); }
   S.dict = 'wait'; render();
   try {
     const clients = svcClients().map(r => [r.row, v(r, 'A'), productName(v(r, 'G')), v(r, 'C')]);
@@ -1672,6 +1710,93 @@ async function dictDone(d) {
     if (j.row && j.alts.length) toast('בדוק שזה הלקוח הנכון – יש עוד ' + j.alts.length + ' בשם דומה');
   } catch (e) { toast('ההכתבה לא הצליחה: ' + (e.message || e) + '. אפשר למלא ידנית.', true); }
   S.dict = null; render();
+}
+/* ---------- עוזר בקול / בטקסט בראש מסך הבית – מנהלים בלבד (אפרים, 25.11.26) ----------
+ * מקליטים או כותבים: פניית שירות, ליד חדש, הערה ותאריך חזרה, או שאלה על המצב.
+ * השרת (assist) מבין מה רוצים ומחזיר הצעה. שום דבר לא נכתב לגיליון בלי לחיצה על אישור. */
+function mmssOf(sec) { sec = Math.floor(sec); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); }
+function asCard() {
+  const d = S.dict && S.dict !== 'wait' && S.dict.target === 'as' ? S.dict : null;
+  const a = S.as || {};
+  return `<div class="card" style="border:2px solid #14CCAB">
+    ${d ? `<div style="text-align:center"><div style="font-size:22px;font-weight:bold;color:#c00">&#x1F534; <span id="asT">${mmssOf((Date.now() - d.t0) / 1000)}</span></div>
+        <div class="row" style="justify-content:center;margin-top:6px"><button class="btn" onclick="dictStop(false)">&#x23F9; סיום ושליחה</button><button class="btn ghost" onclick="dictStop(true)">&#x2715; ביטול</button></div></div>`
+    : a.busy ? `<div class="muted" style="text-align:center;padding:8px">&#x23F3; חושב… (כ-15 שניות)</div>`
+    : `<div class="row" style="flex-wrap:nowrap;gap:6px"><button class="btn" style="flex:none;font-size:16px" onclick="dictStart('as')" title="הקלטה">&#x1F3A4; הקלטה</button>
+        <input id="asText" placeholder="שאלה, פנייה, ליד חדש או הערה…" style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')asSendText()">
+        <button class="btn light" style="flex:none" onclick="asSendText()">שלח</button></div>
+      ${a.res ? '' : '<div class="muted" style="margin-top:6px">למשל: "כמה לקוחות יש אצל אליחי?" · "פניית שירות ליוסף, ביקש חשבונית, חזרה ביום ראשון" · "ליד חדש דוד 052…"</div>'}`}
+    ${a.res && !a.busy && !d ? asResult(a.res) : ''}
+  </div>`;
+}
+function asSendText() {
+  const el = document.getElementById('asText'), text = el ? el.value.trim() : '';
+  if (!text) return toast('כתוב מה צריך, או לחץ על הקלטה', true);
+  asSend({ text });
+}
+async function asSend(args) {
+  S.as = { busy: true }; S.asMore = 0; if (S.view === 'today') render();
+  try { S.as = { res: await call('assist', args) }; }
+  catch (e) { S.as = {}; toast('העוזר לא הצליח: ' + (e.message || e), true); }
+  const r = S.as.res;
+  if (r && r.intent === 'service') return asToService(r);
+  if (r && r.intent === 'lead') return asToLead(r);
+  if (S.view !== 'today') go('today'); else render();
+}
+function asClear() { S.as = {}; render(); }
+function asRowsHtml(rows) {
+  const list = rows.map(rowByNum).filter(r => r && !r.hidden);
+  const shown = list.slice(0, S.asMore ? 300 : 20);
+  return shown.map(leadItem).join('') + (list.length > shown.length ? `<div class="row" style="justify-content:center"><button class="btn light" onclick="S.asMore=1;render()">להציג את כל ${list.length}</button></div>` : '');
+}
+function asPickRow(n) { const r = S.as.res; r.alts = r.alts.filter(x => x !== n).concat(r.row ? [r.row] : []); r.row = n; render(); }
+function asResult(r) {
+  const heard = r.transcript ? `<div class="muted" style="margin-top:8px">שמעתי: "${esc(r.transcript)}"</div>` : '';
+  const close = `<button class="btn ghost" style="padding:4px 10px" onclick="asClear()">&#x2715; סגירה</button>`;
+  if (r.intent === 'note') {
+    const row = r.row && rowByNum(r.row);
+    return `${heard}<div style="margin-top:8px"><b>&#x1F4DD; הערה ותאריך חזרה</b></div>
+      ${row ? `<div style="margin-top:4px"><b>${esc(v(row, 'A'))}</b> <span class="muted">${esc(productName(v(row, 'G')))}${v(row, 'C') ? ' · ' + esc(v(row, 'C')) : ''}</span></div>`
+        : `<div class="muted">לא מצאתי בוודאות את "${esc(r.heard)}".</div>`}
+      ${r.alts.length ? `<div class="muted" style="margin-top:4px">${row ? 'או אולי:' : 'בחר:'}</div>${r.alts.map(rowByNum).filter(Boolean).map(x => `<div class="card lead" style="padding:6px 10px;margin:3px 0" onclick="asPickRow(${x.row})"><div class="main"><div class="name">${esc(v(x, 'A'))}</div><div class="sub">${esc(productName(v(x, 'G')))}${v(x, 'C') ? ' · ' + esc(v(x, 'C')) : ''}</div></div></div>`).join('')}` : ''}
+      <label>הערה לסיכום</label><textarea id="asNote" oninput="S.as.res.note=this.value">${esc(r.note)}</textarea>
+      <label>תאריך חזרה (לא חובה)</label><input type="date" value="${r.K}" style="max-width:170px" onchange="S.as.res.K=this.value;render()">${r.K ? ` <span class="muted">${dayName(r.K)}</span>` : ''}
+      <div class="row" style="margin-top:8px"><button class="btn teal" onclick="asSaveNote()" ${row ? '' : 'disabled'}>&#x2713; שמור</button>${close}</div>`;
+  }
+  // שאלה / לא ברור
+  return `${heard}<div style="margin-top:8px;font-size:17px"><b>${esc(r.answer || 'לא הבנתי. נסה לנסח אחרת.')}</b></div>
+    ${r.rows && r.rows.length ? `<details style="margin-top:6px" ${r.rows.length <= 5 ? 'open' : ''}><summary>להציג (${r.rows.length})</summary>${asRowsHtml(r.rows)}</details>` : ''}
+    <div class="row" style="margin-top:8px">${close}</div>`;
+}
+async function asSaveNote() {
+  const r = S.as.res, row = rowByNum(r.row);
+  if (!row) return toast('בחר שורה', true);
+  const note = String(r.note || '').trim();
+  if (!note && !r.K) return toast('אין מה לשמור', true);
+  const base = { row: row.row, fp: row.fp, id: v(row, 'AO') };
+  if (note) await writeCall('addNote', { ...base, text: note }, r.K ? '' : 'ההערה נשמרה');
+  if (r.K) await writeCall('setNext', { ...base, value: r.K }, note ? 'ההערה ותאריך החזרה נשמרו' : 'תאריך החזרה נקבע');
+  S.as = {}; render();
+  openLead(row.row);
+}
+function asToService(r) {
+  S.svc = { q: r.row || r.alts.length ? '' : (r.heard || ''), row: r.row, alts: r.row ? [] : r.alts, note: r.note, C: r.C || S.data.me,
+    K: r.K || iso(addDays(today0(), 1)), heard: r.row ? '' : r.heard, transcript: r.transcript };
+  S.as = {};
+  if (S.view === 'svc') render(); else go('svc');
+  if (r.row && r.alts.length) toast('בדוק שזה הלקוח הנכון – יש עוד ' + r.alts.length + ' בשם דומה');
+}
+function asToLead(r) {
+  const L = r.lead || {};
+  S.as = {};
+  if (S.view === 'new') render(); else go('new');
+  const set = (id, val) => { const el = document.getElementById(id); if (el && val) { el.value = val; el.classList.add('changed'); saveDraft(el); } };
+  set('n_A', L.A); set('n_E', L.E); set('n_D', L.D); set('n_K', r.K);
+  set('n_note', [r.note, L.B ? 'עסק: ' + L.B : ''].filter(Boolean).join('\n'));
+  const g = document.getElementById('n_G'); if (g && L.G) g.value = L.G;
+  const c = document.getElementById('n_C'); if (c && r.C) c.value = r.C;
+  toast('מילאתי את פרטי הליד – בדוק ושמור');
+  if (L.E || L.D) checkDup();
 }
 /* ---------- שמירה באנשי קשר (אפרים, 19.11.26) ----------
  * אפליקציית אינטרנט לא יכולה לשמור איש קשר לבד: יוצרים כרטיס vCard. בטלפון נפתח מסך השיתוף (בוחרים "אנשי קשר"),
