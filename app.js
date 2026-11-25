@@ -63,7 +63,7 @@ function setWho(updating) {
 }
 /** האם המשתמש באמצע הקלדה או עריכה – אז לא מרעננים כדי לא למחוק לו את מה שכתב. */
 function isTyping() {
-  if (S.recBusy || S.mic) return true; // באמצע הקלטה או העלאה – לא מרעננים את המסך
+  if (S.recBusy || S.mic || S.dict) return true; // באמצע הקלטה או העלאה – לא מרעננים את המסך
   const a = document.activeElement;
   if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
   return [...document.querySelectorAll('#panel textarea, #panel input, #main textarea, #main input:not([type=search])')]
@@ -237,7 +237,7 @@ function render() {
   const m = document.getElementById('main');
   if (S.view === 'clients' && !S.data.canClients) S.view = 'today';
   if (S.view === 'salary' && !S.data.canSalary) S.view = 'today';
-  m.innerHTML = S.view === 'today' ? viewToday() : S.view === 'all' ? viewAll() : S.view === 'dash' ? viewDash() : S.view === 'clients' ? viewClients() : S.view === 'salary' ? viewSalary() : viewNew();
+  m.innerHTML = S.view === 'today' ? viewToday() : S.view === 'all' ? viewAll() : S.view === 'dash' ? viewDash() : S.view === 'clients' ? viewClients() : S.view === 'salary' ? viewSalary() : S.view === 'svc' ? viewSvc() : viewNew();
   if (S.view === 'new') restoreDrafts(m);
   if (S.view === 'today') initSortable();
 }
@@ -328,6 +328,7 @@ function viewToday() {
       <div class="stat" onclick="S.f.who='me';S.f.stage='leads';S.f.status='פעיל';S.f.due='stock';S.f.q='';go('all')"><b>${stock}</b><span>מלאי</span></div>
     </div>
     ${meetBanner()}
+    <div class="row" style="margin:0 0 10px"><button class="btn light" onclick="openSvc()">&#x1F6CE; פניית שירות חדשה</button></div>
     <div class="muted" style="margin:-2px 2px 8px">לסידור ידני: לחיצה ארוכה על ליד וגרירה. הסדר נשמר לך בלבד.</div>
     <h3 id="sec-today">להיום (${tod.length})</h3>${sortList(tod)}
     <h3 id="sec-over">באיחור (${over.length})</h3>${sortList(over)}
@@ -1542,6 +1543,133 @@ async function serviceNew() {
   const res = await writeCall('service', { ...ref(), note, C: on.dataset.c, K }, 'נפתחה פניית שירות');
   if (res.newRow) openLead(res.newRow);
 }
+/* ---------- פניית שירות מהירה + הכתבה קולית (אפרים, 25.11.26) ----------
+ * בכיוון ההפוך: פותחים פנייה ובוחרים לקוח מהרשימה, במקום לחפש כרטיס. אפשר גם להכתיב בקול,
+ * והשרת (svcParse) ממלא את הטופס: לקוח, תוכן, תאריך חזרה ומטפל. נפתח רק אחרי לחיצה על "פתח". */
+function svcState() {
+  if (!S.svc) S.svc = { q: '', row: null, alts: [], note: '', C: S.data.me, K: iso(addDays(today0(), 1)), heard: '', transcript: '' };
+  return S.svc;
+}
+function openSvc() { S.svc = null; svcState(); go('svc'); }
+/** לקוחות לבחירה: שורות שאינן ליד/פנייה, אחת לכל לקוח (קודם לקוחות פעילים בליווי/צמיחה, אחר כך החדשה ביותר) */
+function svcClients() {
+  const rank = r => (r.active && CLIENT_STAGES.includes(v(r, 'G')) ? 0 : r.active ? 1 : 2);
+  const list = S.rows.filter(r => !r.follow && !r.hidden && v(r, 'A')).sort((a, b) => rank(a) - rank(b) || b.row - a.row);
+  const out = [];
+  list.forEach(r => { if (!out.some(x => sameClient(x, r) || (v(x, 'A') === v(r, 'A') && !phonesOf(x).length))) out.push(r); });
+  return out;
+}
+function svcPick(n) { const st = svcState(); st.row = n; if (n) st.alts = []; render(); }
+function svcFilter(q) {
+  const st = svcState(); st.q = q;
+  const el = document.getElementById('svcRes'); if (el) el.innerHTML = svcResults();
+}
+function svcResults() {
+  const st = svcState(), q = st.q.trim().toLowerCase();
+  if (!q) return '';
+  const words = q.split(/\s+/);
+  const rows = svcClients().filter(r => words.every(w => r.search.includes(w))).slice(0, 8);
+  return rows.length ? rows.map(svcClientBtn).join('') : '<div class="muted">לא נמצא לקוח בשם הזה</div>';
+}
+function svcClientBtn(r) {
+  return `<div class="card lead" style="padding:8px 10px;margin:4px 0" onclick="svcPick(${r.row})"><div class="main">
+    <div class="name">${esc(v(r, 'A'))}</div><div class="sub">${esc(productName(v(r, 'G')))}${v(r, 'C') ? ' · ' + esc(v(r, 'C')) : ''}${r.active ? '' : ' · לא פעיל'}</div></div></div>`;
+}
+function viewSvc() {
+  const st = svcState(), r = st.row ? rowByNum(st.row) : null;
+  const toSun = (7 - today0().getDay()) % 7 || 7;
+  const q = [['מחר', 1], ['ראשון הקרוב', toSun], ['שבוע', 7]];
+  const dict = S.dict;
+  const dictSec = dict && dict !== 'wait' ? Math.floor((Date.now() - dict.t0) / 1000) : 0;
+  return `<h2>&#x1F6CE; פניית שירות חדשה</h2>
+  <div class="card" style="text-align:center">
+    ${dict === 'wait' ? '<div class="muted">מתמלל ומבין את ההכתבה…</div>'
+      : dict ? `<div style="font-size:22px;font-weight:bold;color:#c00">&#x1F534; ${Math.floor(dictSec / 60)}:${String(dictSec % 60).padStart(2, '0')}</div>
+        <div class="row" style="justify-content:center;margin-top:6px"><button class="btn" onclick="dictStop(false)">&#x23F9; סיום</button><button class="btn ghost" onclick="dictStop(true)">&#x2715; ביטול</button></div>`
+      : `<button class="btn" style="font-size:17px;padding:10px 18px" onclick="dictStart()">&#x1F3A4; הכתבה בקול</button>
+        <div class="muted" style="margin-top:6px">למשל: "לקוח ישראל ישראלי, ביקש חשבונית על נובמבר, חזרה ביום ראשון"</div>`}
+    ${st.transcript ? `<div class="muted" style="margin-top:8px;text-align:right">שמעתי: "${esc(st.transcript)}"</div>` : ''}
+  </div>
+  <div class="card"><label>לקוח *</label>
+    ${r ? `<div class="row" style="justify-content:space-between"><div><b>${esc(v(r, 'A'))}</b> <span class="muted">${esc(productName(v(r, 'G')))}${v(r, 'C') ? ' · ' + esc(v(r, 'C')) : ''}</span></div>
+      <button class="btn ghost" style="padding:4px 10px" onclick="svcPick(null)">החלפה</button></div>`
+      : `${st.heard ? `<div class="muted" style="margin-bottom:4px">לא בטוח מי "${esc(st.heard)}". בחר מהרשימה או חפש:</div>` : ''}
+      ${st.alts.map(n => rowByNum(n)).filter(Boolean).map(svcClientBtn).join('')}
+      <input type="search" id="svcQ" placeholder="חיפוש לקוח לפי שם או טלפון" value="${esc(st.q)}" oninput="svcFilter(this.value)">
+      <div id="svcRes">${svcResults()}</div>`}
+  </div>
+  <div class="card"><label>במה מדובר? *</label>
+    <textarea id="svcNoteQ" placeholder="למשל: שאלה על חשבונית, ביקש לדבר עם היועץ…" oninput="svcState().note=this.value">${esc(st.note)}</textarea>
+    <div class="row" style="margin-top:6px"><span class="muted">מי מטפל:</span>
+      ${S.data.handlers.map(h => `<button class="btn light${h === st.C ? ' on' : ''}" onclick="svcState().C='${esc(h)}';render()">${esc(h)}</button>`).join('')}</div>
+    <div class="row" style="margin-top:6px"><span class="muted">תאריך חזרה:</span>
+      ${q.map(([t, d]) => `<button class="btn light${st.K === iso(addDays(today0(), d)) ? ' on' : ''}" onclick="svcState().K='${iso(addDays(today0(), d))}';render()">${t}</button>`).join('')}
+      <input type="date" value="${st.K}" style="max-width:170px" onchange="svcState().K=this.value;render()"></div>
+    ${st.K ? `<div class="muted" style="margin-top:4px">${dayName(st.K)}, ${ddmm(st.K)}</div>` : ''}
+    <div class="row" style="margin-top:10px"><button class="btn teal" onclick="svcSubmit()">&#x2713; פתח פניית שירות</button></div>
+  </div>`;
+}
+async function svcSubmit() {
+  const st = svcState(), r = st.row && rowByNum(st.row);
+  if (!r) return toast('בחר לקוח', true);
+  if (!st.note.trim()) return toast('כתוב במה מדובר בפנייה', true);
+  if (!st.C) return toast('בחר מי מטפל', true);
+  const res = await writeCall('service', { row: r.row, fp: r.fp, id: v(r, 'AO'), note: st.note.trim(), C: st.C, K: st.K }, 'נפתחה פניית שירות ל' + v(r, 'A'));
+  S.svc = null;
+  S.view = 'today'; render();
+  if (res && res.newRow) openLead(res.newRow);
+}
+const DICT_MAX_SEC = 120;
+async function dictStart() {
+  if (S.dict || S.mic || S.recBusy) return toast('יש כבר הקלטה שפועלת', true);
+  if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder)) return toast('הדפדפן הזה לא מאפשר הקלטה. פתח את האפליקציה המותקנת.', true);
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
+  catch (e) { return toast(window.PWA ? 'אין גישה למיקרופון. צריך לאשר מיקרופון לאפליקציה.' : 'בקישור הזה הדפדפן חוסם את המיקרופון. פתח את האפליקציה המותקנת.', true); }
+  const type = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+  let rec;
+  try { rec = new MediaRecorder(stream, type ? { mimeType: type, audioBitsPerSecond: 32000 } : {}); }
+  catch (e) { stream.getTracks().forEach(t => t.stop()); return toast('ההקלטה לא הצליחה להתחיל: ' + e.message, true); }
+  const d = { rec, stream, chunks: [], t0: Date.now(), cancel: false };
+  S.dict = d;
+  rec.ondataavailable = e => { if (e.data && e.data.size) d.chunks.push(e.data); };
+  rec.onstop = () => dictDone(d);
+  rec.start(1000);
+  d.tick = setInterval(() => {
+    if (S.dict !== d) return clearInterval(d.tick);
+    if ((Date.now() - d.t0) / 1000 >= DICT_MAX_SEC) return dictStop(false);
+    if (S.view === 'svc') render();
+  }, 1000);
+  render();
+}
+function dictStop(cancel) {
+  const d = S.dict; if (!d || d === 'wait') return;
+  d.cancel = cancel; d.sec = (Date.now() - d.t0) / 1000;
+  clearInterval(d.tick);
+  try { if (d.rec.state !== 'inactive') d.rec.stop(); else dictDone(d); } catch (e) { dictDone(d); }
+}
+async function dictDone(d) {
+  if (d.done) return; d.done = true;
+  d.stream.getTracks().forEach(t => t.stop());
+  if (d.cancel) { S.dict = null; render(); return; }
+  const mime = (d.rec.mimeType || (d.chunks[0] && d.chunks[0].type) || 'audio/webm').split(';')[0];
+  const blob = new Blob(d.chunks, { type: mime });
+  if (d.sec < 1.5 || blob.size < 1500) { S.dict = null; render(); return toast('ההקלטה קצרה מדי', true); }
+  S.dict = 'wait'; render();
+  try {
+    const clients = svcClients().map(r => [r.row, v(r, 'A'), productName(v(r, 'G')), v(r, 'C')]);
+    const j = await call('svcParse', { data: await blobB64(blob), mime, clients });
+    const st = svcState();
+    st.transcript = j.transcript;
+    if (j.row) { st.row = j.row; st.alts = []; st.heard = ''; }
+    else { st.row = null; st.alts = j.alts; st.heard = j.heard || ''; st.q = j.alts.length ? '' : (j.heard || ''); }
+    if (j.note) st.note = j.note;
+    if (j.K) st.K = j.K;
+    if (j.C) st.C = j.C;
+    if (j.row && j.alts.length) toast('בדוק שזה הלקוח הנכון – יש עוד ' + j.alts.length + ' בשם דומה');
+  } catch (e) { toast('ההכתבה לא הצליחה: ' + (e.message || e) + '. אפשר למלא ידנית.', true); }
+  S.dict = null; render();
+}
 /* ---------- שמירה באנשי קשר (אפרים, 19.11.26) ----------
  * אפליקציית אינטרנט לא יכולה לשמור איש קשר לבד: יוצרים כרטיס vCard. בטלפון נפתח מסך השיתוף (בוחרים "אנשי קשר"),
  * ואם אין שיתוף – הכרטיס יורד ונפתח באנשי הקשר. השם: "<שם> ליד", ובשורות שאינן ליד – "<שם> לקוח". */
@@ -1571,5 +1699,7 @@ function toast(msg, err) {
 function busy(on) { document.getElementById('loading').style.display = on ? 'flex' : 'none'; }
 window.addEventListener('keydown', e => { if (e.key === 'Escape' && S.current) closeLead(); });
 render();
+// קיצור דרך מהאייקון (לחיצה ארוכה): ?svc=1 פותח ישר את מסך פניית השירות
+if (/[?&]svc=1/.test(location.search)) { S.view = 'svc'; if (window.PWA) { history.replaceState({ view: 'today' }, '', location.pathname); history.pushState({ view: 'svc' }, ''); } }
 startFromCache();
 reload(true);
