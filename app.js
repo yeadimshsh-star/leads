@@ -237,7 +237,8 @@ function render() {
   const m = document.getElementById('main');
   if (S.view === 'clients' && !S.data.canClients) S.view = 'today';
   if (S.view === 'salary' && !S.data.canSalary) S.view = 'today';
-  m.innerHTML = S.view === 'today' ? viewToday() : S.view === 'all' ? viewAll() : S.view === 'dash' ? viewDash() : S.view === 'clients' ? viewClients() : S.view === 'salary' ? viewSalary() : S.view === 'svc' ? viewSvc() : viewNew();
+  if (S.view === 'svc' && !S.data.canClients) S.view = 'today';
+  m.innerHTML = S.view === 'today' ? viewToday() : S.view === 'all' ? viewAll() : S.view === 'dash' ? viewDash() : S.view === 'clients' ? viewClients() : S.view === 'salary' ? viewSalary() : S.view === 'svc' && S.data.canClients ? viewSvc() : viewNew();
   if (S.view === 'new') restoreDrafts(m);
   if (S.view === 'today') initSortable();
 }
@@ -328,7 +329,7 @@ function viewToday() {
       <div class="stat" onclick="S.f.who='me';S.f.stage='leads';S.f.status='פעיל';S.f.due='stock';S.f.q='';go('all')"><b>${stock}</b><span>מלאי</span></div>
     </div>
     ${meetBanner()}
-    <div class="row" style="margin:0 0 10px"><button class="btn light" onclick="openSvc()">&#x1F6CE; פניית שירות חדשה</button></div>
+    ${S.data.canClients ? `<div class="row" style="margin:0 0 10px"><button class="btn light" onclick="openSvc()">&#x1F6CE; פניית שירות חדשה</button></div>` : ''}
     <div class="muted" style="margin:-2px 2px 8px">לסידור ידני: לחיצה ארוכה על ליד וגרירה. הסדר נשמר לך בלבד.</div>
     <h3 id="sec-today">להיום (${tod.length})</h3>${sortList(tod)}
     <h3 id="sec-over">באיחור (${over.length})</h3>${sortList(over)}
