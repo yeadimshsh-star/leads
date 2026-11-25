@@ -1723,11 +1723,18 @@ function asCard() {
         <div class="row" style="justify-content:center;margin-top:6px"><button class="btn" onclick="dictStop(false)">&#x23F9; סיום ושליחה</button><button class="btn ghost" onclick="dictStop(true)">&#x2715; ביטול</button></div></div>`
     : a.busy ? `<div class="muted" style="text-align:center;padding:8px">&#x23F3; חושב… (כ-15 שניות)</div>`
     : `<div class="row" style="flex-wrap:nowrap;gap:6px"><button class="btn" style="flex:none;font-size:16px" onclick="dictStart('as')" title="הקלטה">&#x1F3A4; הקלטה</button>
-        <input id="asText" placeholder="שאלה, פנייה, ליד חדש או הערה…" style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')asSendText()">
+        <input id="asText" placeholder="${S.asHist && S.asHist.length ? 'שאלת המשך… (או לחץ סגירה לנושא חדש)' : 'שאלה, פנייה, ליד חדש או הערה…'}" style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')asSendText()">
         <button class="btn light" style="flex:none" onclick="asSendText()">שלח</button></div>
-      ${a.res ? '' : '<div class="muted" style="margin-top:6px">למשל: "כמה לקוחות יש אצל אליחי?" · "פניית שירות ליוסף, ביקש חשבונית, חזרה ביום ראשון" · "ליד חדש דוד 052…"</div>'}`}
+      ${a.res || (S.asHist && S.asHist.length) ? '' : '<div class="muted" style="margin-top:6px">למשל: "כמה לקוחות יש אצל אליחי?" · "פניית שירות ליוסף, ביקש חשבונית, חזרה ביום ראשון" · "ליד חדש דוד 052…"</div>'}`}
+    ${asHistHtml(a.res ? 1 : 0)}
     ${a.res && !a.busy && !d ? asResult(a.res) : ''}
   </div>`;
+}
+/** השיחה הקודמת (שאלות המשך): נשמרת רק בטלפון עד "סגירה" או עד שסוגרים את האפליקציה */
+function asHistHtml(skipLast) {
+  const h = (S.asHist || []).slice(0, skipLast ? -1 : undefined);
+  return h.length ? `<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">${h.map(x =>
+    `<div class="muted" style="margin-top:4px">&#x2753; ${esc(x.q)}</div><div style="margin-bottom:4px">${esc(x.a)}</div>`).join('')}</div>` : '';
 }
 function asSendText() {
   const el = document.getElementById('asText'), text = el ? el.value.trim() : '';
@@ -1735,15 +1742,18 @@ function asSendText() {
   asSend({ text });
 }
 async function asSend(args) {
+  S.asHist = S.asHist || [];
+  args.history = S.asHist.map(x => ({ q: x.q, a: x.a, f: x.f }));
   S.as = { busy: true }; S.asMore = 0; if (S.view === 'today') render();
   try { S.as = { res: await call('assist', args) }; }
   catch (e) { S.as = {}; toast('העוזר לא הצליח: ' + (e.message || e), true); }
   const r = S.as.res;
+  if (r) S.asHist = S.asHist.concat([{ q: r.transcript || args.text || '', a: r.answer || ({ service: 'פתחתי טופס פניית שירות', lead: 'פתחתי טופס ליד חדש', note: 'הצעתי הערה לשמירה' }[r.intent] || ''), f: r.filter || null }]).slice(-6);
   if (r && r.intent === 'service') return asToService(r);
   if (r && r.intent === 'lead') return asToLead(r);
   if (S.view !== 'today') go('today'); else render();
 }
-function asClear() { S.as = {}; render(); }
+function asClear() { S.as = {}; S.asHist = []; render(); }
 function asRowsHtml(rows) {
   const list = rows.map(rowByNum).filter(r => r && !r.hidden);
   const shown = list.slice(0, S.asMore ? 300 : 20);
